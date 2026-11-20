@@ -259,6 +259,14 @@ three found by poking every main-menu item with PAD_SCRIPT + iterate.sh. In
 a windowed run, reaching missing code now shows a message box (main.c
 missing_code) instead of the window just vanishing; the address still goes
 to disc\missing_entries.txt. Expect more in screens not visited yet.
+- 0x19013c and 0x14e45c (user play-tests) were switch cases, not functions:
+  recomp_ee.py find_jump_table missed a table base loaded far up the
+  function, tables with no bound check, and at 0x14e3e4 took an unrelated
+  loop's `sltiu` (bound 2) for a 249-case table. The bound now has to test the
+  register that is shifted into the table offset; without one the table is
+  counted from its words (up to 256). `gen/unresolved_jr.txt` lists any jr
+  still unresolved (0 now). A launcher-built game logs to game\bmx2.log and
+  writes game\missing_entries.txt.
 
 ## Audio (2026-11-19, eighth session) — works, confirmed by ear by the user
 - `runtime/spu2.c`: mixes in emulated time (48 kHz from ee.cycles, at every

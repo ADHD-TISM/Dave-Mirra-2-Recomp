@@ -106,7 +106,7 @@ def is_addu(w): return (w >> 26) == 0 and (w & 0x7ff) in (0x21, 0x2d)
 
 def find_jump_table(exe, i):
     reg = i.rs
-    lw = None; n = None; luis = []; addius = {}
+    lw = None; n = None; luis = []; addius = {}; idx = None
     a = i.a - 4
     for _ in range(24):
         w = exe.word(a)
@@ -117,11 +117,14 @@ def find_jump_table(exe, i):
         else:
             if j.op == 15: luis.append(j)
             elif j.op in (9, 0x19) and j.rs == j.rt: addius.setdefault(j.rt, j)
-            elif j.op == 11 and n is None: n = j.imm
+            elif j.op == 0 and (w & 63) == 0 and idx is None: idx = (w >> 16) & 31   # sll rd, rt, 2: rt is the case index
+            # the bound must test the case index: at 0x14e3e4 an unrelated loop's
+            # sltiu (bound 2) was taken and 247 of 249 cases were lost
+            elif j.op == 11 and n is None and (idx is None or j.rs == idx): n = j.imm
         a -= 4
     if lw is None: return None
     infer = not n          # no sltiu bound in front (0x189e80, 0x195bac): count the table itself
-    if infer: n = 64
+    if infer: n = 256
     def table(base):
         out = []
         for idx in range(n):
