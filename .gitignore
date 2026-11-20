@@ -1,0 +1,23 @@
+# Whitelist: only the project's own source is tracked.
+# Never commit game data: the disc, the game image, generated code (gen*/ embed
+# or translate game code), VU1 code snapshots, builds, logs.
+/*
+!/.gitignore
+!/bmx2recomp/
+!/launcher/
+
+/bmx2recomp/*
+!/bmx2recomp/NOTES.md
+!/bmx2recomp/build.sh
+!/bmx2recomp/extra_ee.txt
+!/bmx2recomp/vu_recipe.json
+!/bmx2recomp/runtime/
+!/bmx2recomp/tools/
+!/bmx2recomp/gen_vu/
+/bmx2recomp/gen_vu/*
+!/bmx2recomp/gen_vu/*.pcs
+/bmx2recomp/tools/__pycache__/
+
+/launcher/*
+!/launcher/bmx2launcher.py
+!/launcher/build_exe.sh

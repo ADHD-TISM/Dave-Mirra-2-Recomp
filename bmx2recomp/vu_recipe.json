@@ -1,0 +1,69 @@
+{
+ "comment": "VU1 code snapshots rebuilt from the game ELF at build time (the launcher reads this); vu = offset in VU1 code memory, file = offset in from_file",
+ "snapshots": [
+  {
+   "hash": "67ff695f7ff5f9a4",
+   "size": 16384,
+   "sha256": "b02882e7c808e941ca988a01e41b88023bd05b398694f82c53fafa200d6b3b4d",
+   "from_file": "SLUS_201.59",
+   "pieces": [
+    {
+     "vu": 0,
+     "file": 1018320,
+     "len": 2048
+    },
+    {
+     "vu": 2048,
+     "file": 1020376,
+     "len": 2048
+    },
+    {
+     "vu": 4096,
+     "file": 1022432,
+     "len": 2048
+    },
+    {
+     "vu": 6144,
+     "file": 1024488,
+     "len": 2048
+    },
+    {
+     "vu": 8192,
+     "file": 1026544,
+     "len": 2048
+    },
+    {
+     "vu": 10240,
+     "file": 1028600,
+     "len": 920
+    }
+   ],
+   "pcs": [
+    "0070",
+    "0000",
+    "0060",
+    "0010",
+    "2508",
+    "00d0",
+    "0c78",
+    "0050",
+    "05e8",
+    "00b0",
+    "0fc0",
+    "0020",
+    "0970",
+    "0030",
+    "1358",
+    "00e0",
+    "00c0",
+    "23b0",
+    "23e8",
+    "0a68",
+    "01a8",
+    "0e00",
+    "06e0",
+    "1120"
+   ]
+  }
+ ]
+}

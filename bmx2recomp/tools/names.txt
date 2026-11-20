@@ -1,0 +1,32 @@
+# Function names for eedis.py: <hex addr> <name>  # how it was identified
+# Add a line whenever a function's purpose is confirmed; keep the evidence.
+001d3d98 ipu_fdec_sync        # polls IPU_CTRL busy (0x80004000 mask), writes IPU_CMD = a0|0x40000000 (cmd 4 FDEC), then calls 1d39f8
+001d39f8 ipu_wait_result      # polls IPU_CTRL, ld IPU_CMD for the result; main thread parks here during ACCLAIM.PSS (ra 1d3e78)
+00116548 cd_cb_thread         # EE RPC server sid 0x46 thread entry (ZCDDVD read callbacks), see NOTES.md
+00116618 cd_cb_handler        # sid 0x46 callback
+001d3920 ipu_cmd_issue        # sw a0 -> IPU_CMD, records table[cmd>>28] at 0x247264
+001d3950 ipu_wait_idle        # polls IPU_CTRL & 0x80004000 (busy/ECD), calls the sceMpeg no-data callback every 5000 polls
+001d3eb0 ipu_getbits          # FDEC 0 peek + FDEC n skip; used by the picture-header parser 1d4398
+001d4398 mpeg_picture_header  # temporal_ref(10) coding_type(3) vbv_delay(16) ... then writes IPU_CTRL
+001d30b0 mpeg_macroblock      # VDEC TBL1 (MB type, PCT in IPU_CTRL), FDEC dct_type/quant, VDEC TBL2 motion, BDEC; peer-session analysis
+00110090 ipu_dma_save         # saves D4 MADR/TADR/QWC/CHCR, waits OFC=0, saves D3 regs, IPU_BP, IPU_CTRL (sceMpeg StopDMA cb)
+00110190 ipu_dma_restore      # MADR = saved - 16*(IFC+FP), ring wrap, BCLR(saved BP), restarts ch3/ch4, rewrites IPU_CTRL
+001cf6c0 mpeg_callback        # calls mp->cb[type] (type 1 = no data) from the table at mp+0x40
+0010f7e8 mpeg_cb_nodata       # game's no-data callback: rotates the prio-10 ready queue so the movie thread can feed ch4
+00116870 movie_thread         # thread 4: demux/feeds the IPU ring, drives CD reads and audio streaming
+00116858 rotate_ready_10      # j 1ddf50 with a0=10 (RotateThreadReadyQueue(10))
+001e7478 sceSdRemote          # libsd RPC to sid 0x80000701: send 64 B {self, args...}, recv 16 B, returns word 0
+001115c8 movie_audio_update   # polls sceSdRemote(1, 0x8100 BlockTransStatus, ch); (v0 & 0xffffff) - base = play offset
+001e03c8 sceSifSendCmd        # builds a SetDma list: optional data entry + packet to IOP cmd buffer (addr at 0x2fe520)
+001e14b0 sceSifExecRequest    # runs the server func; rmode != 0 -> RPC_END cmd, rmode 0 -> end packet DMA'd to pkt_addr
+00107668 vif1_intc_handler  # AddIntcHandler(5); reads VIF1_MARK/VIF1_CODE, kicks D2 GIF chain, writes VIF1_FBRST=STC
+00107aa8 install_vif1_handler  # passes fn_00107668 to AddIntcHandler
+001d9008 padPortOpen  # 'libpad: pad port is already open', sends padman cmd 1 with the 256-byte area
+001d92a8 padGetDmaStr  # picks the frame with the larger counter at +0x58 of the two 128-byte pad frames
+001d9358 padRead  # memcpy(data, frame, frame+0x60 length)
+001d93d8 padGetState  # frame+0x70 state, 5 if stable and reqState(+0x71) busy
+001d9488 padSetReqState  # sb +0x71
+001d94f0 padGetReqState  # lbu +0x71
+001d9578 padInfoAct  # +0x6a nrOfActuators, act info at +0x30
+001d9698 padInfoComb  # +0x6b numActComb, comb info at +0x40
+001d97b8 padInfoMode  # +0x65 modeCurId (0xf3 = none), +0x68 nrOfModes, modeTable u16 at +0x50

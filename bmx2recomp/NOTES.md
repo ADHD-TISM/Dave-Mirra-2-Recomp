@@ -1,0 +1,391 @@
+# Dave Mirra Freestyle BMX 2 (PS2, SLUS-20159) static recomp — working notes
+
+Everything lives in `Desktop\rea\Dave Mirra PS2\` (moved 2026-11-19):
+`disc\` = extracted disc (from the .bin, MODE2/2352), `bmx2recomp\` = this project.
+
+## Build / run
+    python -I tools/recomp_ee.py ../disc/SLUS_201.59 gen     # EE ELF -> gen/*.c
+    sh build.sh                                              # -> build/bmx2.exe (clang)
+    build/bmx2.exe --turbo --log-sys 1 --frames 900 ../disc  # headless, logs to stderr
+`OPT="-O1 -DEE_TRACE" sh build.sh` (after `rm -rf build/obj`) records function
+entries; the last 4M are written to `disc/trace.txt` on exit.
+`tools/irxdis.py <irx>` disassembles an IOP module with import stubs named.
+`tools/eedis.py <elf> -f ADDR | ADDR N | --xref ADDR [--span N]` disassembles
+EE code (full R5900, constant-tracked register/string/function annotation,
+xref search). Names come from `tools/names.txt`; add confirmed ones there.
+`tools/dis.py` needs capstone (not installed) and REA cannot analyse MIPS ELFs
+on Windows, so use eedis.py. Workflow summary: skill `ps2-static-recomp`.
+
+## State (2026-11-19, sixth session): levels run at full speed
+Woodward Camp averages 68 fps in --turbo (was 6-35) and holds 59.9 fps in
+real time in the window. VU1 microcode is statically recompiled to C
+(gen_vu/), GS write-backs are cut down, and two host bugs were fixed (getenv
+on every XGKICK, frame pacer). Game printf (DECI2 TTY) now prints. See
+"Performance" and "VU1 static recompile". Still no sound.
+
+## State (2026-11-19, fifth session): pad input works
+Keyboard / XInput / scripted pad input (see "Pad" below). Start skips the
+intro; the main menu, rider/bike/modifier/level screens, the loading screen
+and the first level (Woodward Camp, 3D, rider on screen) all render, and
+the rider rides, crashes and respawns with the run timer counting (headless,
+scripted, to frame 9400). Levels run slowly (6-35 fps host). Still no sound.
+The fourth-session state below is unchanged otherwise.
+
+## State (2026-11-19, end of fourth session)
+The game opens a window (on the Dell) and shows the boot movies through the
+GPU GS: Acclaim logo, Z-Axis logo, the whole intro, 3600 frames with no stall
+(19 s in `--turbo`). New this session: GS front end + OpenGL 3.3 back end,
+VIF0/VIF1, VU0/VU1 micro mode interpreter, VIF i-bit interrupts with a
+resumable DMA. No sound, no pad input yet. Where boot goes after the intro is
+the next thing to find. The bullets below are from 2026-11-16 unless marked.
+- EE recompiler: 4713 functions (5 from `extra_ee.txt`, found by
+  `sh tools/iterate.sh <rounds> [args]`, which reruns and adds missing entries).
+- Runtime: memory map, timers, DMAC (normal/chain), INTC, EE kernel HLE with
+  fiber threads/semaphores/handlers/alarms, DECI2 printf, FPU, MMI (ops the
+  game uses), VU0 macro mode, SIF command + RPC protocol.
+- IOP: `python -I tools/recomp_iop.py ../disc/ZCDDVD.IRX zcddvd 80000 gen_iop`
+  recompiles an IRX (relocated to a fixed base, image embedded);
+  `runtime/iop.c` runs it on fibers against HLE kernel libs (thbase, thsemap,
+  intrman, loadcore, stdio, sysclib, sifman, sifcmd incl. RPC servers and
+  IOP->EE calls, cdvdman reading the .bin). ZCDDVD.IRX runs this way at
+  0x80000. To add a module: list it in `modules[]` and its sids in
+  `iop_is_lle_sid` (iop.c). Other servers are still RPC-level stubs in sif.c
+  (loadfile, cdvd 0x8000059x, mcserv, padman, ZAUDIO 0x47, sdrdrv 0x80000701).
+- Boot reaches: CD mounted, files opened/read (callbacks to EE sid 0x46 work),
+  ~58k qw of GIF data sent, ZAUDIO init calls, then the Acclaim logo movie
+  (ASSETS/MOVIE/ACCLAIM.PSS). (2026-11-19: the IPU now exists and the movies
+  play, see below.)
+- `--no-movies` (fails .PSS opens) does NOT work as a skip: the game then
+  calls a null device method (ra 0x130038).
+- Flags: `--log-sys 1|2`, `--log-iop`, `--log-io`, `--log-ipu`, `--turbo`, `--frames N`,
+  `--log-gs 1|2|3` (targets / every batch / every vertex and GIF tag),
+  `--log-vif 1|2`, `--no-window` (hidden window, GL still runs), `--scale N` (1-4, default 2),
+  `--log-pad`; env `PAD_SCRIPT` (see Pad), `PROF`/`PROF_FROM`, `FT_FROM`, `LOG_GS_FROM`/`LOG_GS_LEVEL`,
+  `VU_RECORD`, `VU_CHECK`, `VU_INTERP`, `GS_EXACT_SYNC`, `GS_SYNC_PER_FRAME` (see Performance / VU1 static recompile),
+  `--log-frames` (see In-game stutter), `--no-audio`, `--log-spu N`, `SPU_WAV`, `ZAUDIO_HLE` (see Audio).
+- Env: `GS_SHOT=<dir> GS_SHOT_EVERY=N` writes the displayed picture as PPM;
+  `VU_DUMP=<dir> [VU_DUMP_AT=frame]` writes vu1_code.bin/vu1_mem.bin at the
+  next XGKICK; `EE_DUMP=<file>` writes EE RAM at the frame limit;
+  `IPU_DUMP` as before. `tools/vudis.py vu1_code.bin [start [count]]`
+  disassembles VU micro code.
+
+## IPU (2026-11-19, third session) — works, movies decode
+`runtime/ipu.c`: commands run on a host fiber and stall where the hardware
+does (input FIFO empty with ch4 idle, output FIFO full with ch3 idle). Keeps
+the real 8+2 qw input FIFO so D4_MADR, IPU_BP (BP/IFC/FP) and IPU_CTRL.IFC
+agree: sceMpeg saves/restores the stream as MADR - 16*(IFC+FP) + BP
+(`ipu_dma_save` 0x110090 / `ipu_dma_restore` 0x110190). ch4 normal + source
+chain, ch3 normal. All commands (BCLR IDEC BDEC VDEC FDEC SETIQ SETVQ CSC PACK
+SETTH); VLC tables B.1-B.15 checked for prefix overlaps at start-up
+("VLC tables are inconsistent" means a typo in a table).
+- The coded block pattern is not a VDEC table: BDEC reads the CBP VLC itself
+  for non-intra MBs and reports it in IPU_CTRL.CBP. The game only uses VDEC
+  TBL 1 (MB type) and 2 (motion code). sceMpeg does motion compensation on the
+  EE and colour-converts with CSC (one CSC per picture, RAW8 in).
+- sceMpeg's picture output is macroblocks in **column-major** order.
+- Debug: `--log-ipu` (every command but FDEC 8, plus ch4 starts),
+  `IPU_DUMP=<dir> IPU_DUMP_EVERY=N` writes every Nth CSC picture as PPM;
+  `ipu_stats()` prints command counts at the frame limit.
+- Verified: ACCLAIM.PSS (256x128) and the Z-Axis intro (512x256) decode to
+  clean pictures incl. P/B frames.
+
+## Fixes that unblocked movie playback (2026-11-19)
+- sdrdrv 0x80000701 (sif.c): `BlockTrans` (0x80e0) records the looping SPU2
+  buffer; `BlockTransStatus` (0x8100) returns (half << 24) | addr advancing at
+  48 kHz 16-bit stereo. With a constant 0 the movie thread never refills audio
+  and the demuxer stops feeding video. No sound is produced (no SPU2 yet).
+- IOP sceSifCallRpc (iop.c): the packet's rmode is not the call mode. Waiting
+  calls need rmode 1 (EE answers with RPC_END), no-wait calls rmode 1 only with
+  an end function. With rmode 0 the EE's sceSifExecRequest (0x1e14b0) DMAs the
+  end packet to pkt_addr and sends nothing. Each IOP client now has its own
+  packet buffer at 0x1f000 + 0x40*n, and sceSifCheckStatRpc checks that
+  packet's rpc_id/alloc flag (bind marks it too). Before this, ZCDDVD's
+  double-buffered reads (flag 1, type-4 callback, mode 0 call) hung at the end
+  of a file.
+- New EE entry 0x1d18f8 (indirect target in the macroblock decoder).
+
+## GS, VIF, VU (2026-11-19, fourth session)
+Files: `gs_mem.c` (swizzle), `gs.c` (front end), `gs_gl.c` (GPU back end),
+`vif.c`, `vu.c`, `gs.h`. `stubs.c` is empty now.
+- `gs_mem.c`: all storage layouts (CT32/24/16/16S, T8, T4, T8H/T4HL/T4HH,
+  Z32/24/16/16S). Checked against the reference's address functions with a
+  scratch harness: 0 mismatches over 4 base pointers x 4 widths x 256 lines.
+  T8/T4 columns are the CT32 column pattern with every other row pair
+  rotated by 4 (derived, not a copied table).
+- `gs.c`: GIF PACKED/REGLIST/IMAGE per path (1 XGKICK, 2 VIF DIRECT, 3 DMA),
+  all drawing registers, vertex queue for every primitive (sprites become 2
+  triangles, points 1x1 quads, flat shading done on the CPU), host->local
+  and local->local transfers, CLUT loads (CSM1/CSM2, CLD modes), SIGNAL/FINISH
+  interrupts, display from DISPFB/DISPLAY/PMODE/SMODE2 (field mode halves the
+  height; the game runs 640x224 fields).
+- `gs_gl.c` (meets the "Renderer requirement" below): render targets are
+  RGBA8 FBOs of FBW*64 x 1024 GS pixels at `--scale`, Z is DEPTH32F written
+  from the shader; batches merge until the draw state changes; the shader
+  does texelFetch with GS wrap modes (incl. region clamp/repeat), bilinear by
+  hand, TFX/TCC, fog, alpha test (2 passes for AFAIL), and builds the GS blend
+  with dual-source blending. Local memory stays the truth: uploads are mirrored
+  into overlapping targets of the same layout, readers of memory a dirty target
+  covers download it first, textures that are a target are sampled from it.
+  Decoded textures are cached on TEX0/CLUT/TEXA + per-page write generations.
+  Not done: DATE, dithering, COLCLAMP wrap, Ad as blend factor (taken as 1.0),
+  blend factors above 1.0 on the destination side, local->host transfers,
+  mipmaps (MMIN uses the MMAG filter), Z buffer readback.
+- `vif.c`: every VIF command; UNPACK with cycle (skip and fill), mask,
+  row/col, add modes, FLG/TOPS; BASE/OFFSET double buffering; MPG; DIRECT.
+  **i-bit interrupts matter**: the game's VIF1 handler (0x107668) reads
+  VIF1_MARK/VIF1_CODE, builds the movie's GIF chain (path 3) and writes the
+  movie quad into the VIF stream, then resumes with FBRST.STC. So the VIF
+  stalls at the i-bit, keeps the rest of the quadword, and the DMA (hw.c)
+  keeps its state in MADR/QWC/TADR and continues from `dma_resume()`.
+  Without the stall the movie quad had position -0.5 and Z = FLT_MAX.
+- `vu.c`: VU0/VU1 micro mode interpreter (VU0 shares the COP2 registers).
+  Upper result committed after the lower op; one branch delay slot; E bit ends
+  after the next pair; Q/P land after their latency unless WAITQ/WAITP;
+  MAC/status/clip flags without delay; XGKICK feeds path 1 at once. VU1 code
+  is a jump table at 0 (`b target` + `iaddiu vi13` in the delay slot).
+- Open question: the movie quad's colour fades 1 -> 0x40 and stays at 0x40
+  (vertex alpha 0x7f, MODULATE, blend (Cs-Cd)*As+Cd), so the movie shows at
+  half the decoded brightness. Our CSC writes alpha 0x80. Check against real
+  hardware/PCSX2 output before "fixing" anything.
+
+## Pad (2026-11-19, fifth session) — works, menus and a level reached
+`runtime/pad.c` is the IOP side of padman (sids 0x80000100/0x80000101) at
+RPC level; the game's own EE libpad (xpad flavour, 2200, at 0x1d8c78..)
+runs unchanged. padPortOpen (cmd 1) gives a 256-byte area: two 128-byte
+frames; every vblank `pad_vsync()` writes the next one with a bigger frame
+counter (+0x58) and the EE (getDmaStr 0x1d92a8) reads the newer. Offsets are
+in the comment at the top of pad.c, taken from the game's padRead/
+padGetState/padInfoMode/padInfoAct/padInfoComb. Port 0 is a DualShock 2
+(mode 0x73, 0x79 with pressure after setButtonInfo); port 1 is disconnected.
+So far the game only sends cmds 0x12, 0x10, 1 — it never set the main mode.
+- Keyboard (window focused): arrows = D-pad, Enter = Start, Backspace /
+  RShift = Select, K or Space = X, J = Square, L = Circle, I = Triangle,
+  Q/E = L1/R1, 1/3 = L2/R2, Z/C = L3/R3, WASD = left stick, numpad 8462 =
+  right stick. XInput pad 0 maps the usual way (A = X, B = Circle, X =
+  Square, Y = Triangle, triggers = L2/R2).
+- `PAD_SCRIPT="frame:buttons,..."` holds buttons from a frame until the next
+  entry (`start`, `x`, `up+x`, `-` for none) for headless runs; `--log-pad`
+  logs every change and every pad RPC.
+- Route that works headless (turbo, frames are vblanks): `1000:start` skips
+  the intro (main menu ~2550), then X at 2600/3000/3400/4000/4400/4800/
+  5200/5600 goes ProQuest -> rider -> bike -> modifiers -> Woodward Camp ->
+  loading -> instructions -> Rookie challenge panel over the 3D level
+  (~5800; display drops to 512x224 in game); X at 7000/7300/7600 starts
+  the run, then `7900:up` rides.
+- Going this far needed 15 new `extra_ee.txt` entries (20 in all) (iterate.sh with
+  PAD_SCRIPT exported).
+
+## Performance (2026-11-19, sixth session): level 22 -> 68 fps turbo, 60 real time
+Measured with `--log-gs 1` (host fps every 60 frames) on the scripted route
+(NOTES "Pad"), frames 7740-8340 in Woodward Camp. Per frame there: ~1.2M VU1
+instruction pairs, ~760 VU1 runs, ~280 GL batches, ~18k prims.
+- Profiler: `PROF=<file> [PROF_FROM=frame]` (runtime/prof.c) samples the main
+  thread's RIP at ~1 kHz; `python -I tools/prof.py build/bmx2.exe <file> [N]`
+  groups by source file / function, and by DLL for samples outside the exe.
+  `FT_FROM=<frame>` adds cycle shares for GL texture/state/draw/present to the
+  exit stats. `LOG_GS_FROM=<frame> [LOG_GS_LEVEL=n]` turns GS logging on late.
+- What it was, in order of gain:
+  1. `getenv()` on every XGKICK (vu_dump) - 40% of level time. Cached. Never
+     call getenv on a hot path.
+  2. VU1 interpreter (~45%) -> static recompile, see below.
+  3. Render-target write-backs: whole 512x224 target read back and written
+     pixel by pixel ~20x a frame. Now only the page rows a reader touches
+     (`clean` mask per target, `gs_write_row32`), batches wholly outside the
+     scissor are dropped before texture lookup, and texture decodes reuse a
+     write-back from earlier in the same frame (`sync_for_texture`; exact
+     with `GS_EXACT_SYNC=1`). That last one is an approximation made for the
+     TBP 0 textures (Next step 2): they sample the buffer being drawn.
+  4. Frame pacer: no `timeBeginPeriod(1)` (Sleep overslept) and a late frame
+     reset the schedule. Real time was 53-57 fps, now 59.9.
+- GL calls themselves were ~2% (uniforms are cached now and vertices go to a
+  16 MB ring, neither changed fps measurably).
+- Left over (turbo): compiled VU1 37%, vif_word 11%, ntdll 9%, io_read32 6%,
+  gs_read_pixel (texture decode) 6%.
+
+## In-game stutter (fixed 2026-11-19, ninth session)
+User report: picture and music stutter in play. Measured with `--log-frames`
+(each frame over 17 ms; the exit line "frames: N timed, ... over 17 ms"
+counts them, work time only, without the pacer's wait). Woodward Camp,
+real time: ~820 slow frames (20-22 ms, max 42) -> 72 (max 21); turbo:
+490 -> 29; level average 66 -> 119 fps turbo; audio underruns only at
+loads now. Causes, in order of effect:
+1. The once-per-frame synchronous write-back for TBP 0 textures (see
+   Performance 3) made the CPU wait for the GPU every frame. Now
+   asynchronous: sync_for_texture records the rows, present() reads them
+   back into a PBO (2 per target, every 2nd frame) and a capture at least 2
+   frames old is copied into local memory at the next texture read. Those
+   textures therefore show the frame buffer 2-4 frames late. Exact:
+   `GS_EXACT_SYNC=1`; the old synchronous version: `GS_SYNC_PER_FRAME=1`.
+2. WaitVSync (0x1de520) spins on INTC_STAT. hw.c io_read32 now jumps to the
+   next scheduled event after 4 identical reads of a status register within
+   256 cycles (timers and IPU excluded). Skips ~108 of 140 s of emulated time
+   on the route; exit line "hw: N poll loops skipped ahead".
+3. VU1 flag liveness (recomp_vu.py flag_liveness): of 302 MAC/status updates
+   in the reachable code only 20 can be read (FMAND, FSAND mask 2), the rest
+   skip set_flags. VU_CHECK no longer compares MAC/status (vi16/vi17); 0
+   mismatches over 3.67M runs.
+Left: ~70 frames of 18-21 ms in the level, and single long frames at loads.
+
+## VU1 static recompile (2026-11-19, sixth session)
+The game loads one VU1 program (hash 67ff695f7ff5f9a4) at boot and keeps it
+through intro, menus and Woodward Camp.
+- `VU_RECORD=<dir>` writes every new VU1 code snapshot as vu1_<hash>.bin and
+  the entry pcs used as vu1_<hash>.pcs (code changes are seen through MPG
+  writes in vif.c; EE writes to the 0x11008000 mapping are not tracked).
+- `python -I tools/recomp_vu.py gen_vu/vu1_rec.h gen_vu/vu1_*.bin` generates
+  one function per snapshot from the pairs reachable from the entries (plus
+  pc+16 after BAL/JALR). Each pair calls vu.c's upper()/lower()/upper_commit()
+  with constant words; they are always_inline, so the decode folds away and
+  the behaviour is the interpreter's by construction. vu.c includes the
+  header; compiling vu.c takes ~4 minutes. build.sh rebuilds vu.o when the
+  header changes.
+- A jump to a pair that was not generated logs "jumped to XXXX, not
+  generated" and continues in the interpreter: add the pc to the .pcs file and
+  regenerate. Six computed-jump targets were added that way.
+- `VU_CHECK=1` runs the interpreter on a copy first and compares registers,
+  flags, Q/P state, tpc and data memory after every run: 3.6M runs, 0
+  mismatches to frame 9400. `VU_INTERP=1` uses the interpreter only.
+- A new snapshot (another level may load other code) runs interpreted and logs
+  "not recompiled, interpreting"; record it and regenerate.
+
+## Missing code in play (2026-11-19)
+The first hand play-test died at once: the main menu's CheatSniffer callback
+(0x1adf60) was never reached by the scripted runs. Menu callbacks are
+registered as code-built constants (lui + addiu a1), so the recompiler does
+not see them. A scan of every lui/addiu|ori constant that lands on a
+function start (`addiu sp,sp,-N`) or right after a function end (`jr ra`/`j`
++ delay slot) found 47 more; all are in extra_ee.txt (70 entries now), plus
+three found by poking every main-menu item with PAD_SCRIPT + iterate.sh. In
+a windowed run, reaching missing code now shows a message box (main.c
+missing_code) instead of the window just vanishing; the address still goes
+to disc\missing_entries.txt. Expect more in screens not visited yet.
+
+## Audio (2026-11-19, eighth session) — works, confirmed by ear by the user
+- `runtime/spu2.c`: mixes in emulated time (48 kHz from ee.cycles, at every
+  vblank and on every libsd call) into a ring; a waveOut thread plays it
+  (8 variable-length buffers, silence only when about to run dry). No device
+  in --turbo or with `--no-audio`. `SPU_WAV=<file>` writes everything mixed
+  (works in turbo); `--log-spu 1|2` logs switches / every param.
+- Movies: SDRDRV stays an RPC-level HLE in sif.c (sid 0x80000701); its
+  BlockTrans now plays the IOP loop buffer (512-byte L/R blocks) and
+  BlockTransStatus reports the real play position.
+- ZAUDIO.IRX runs recompiled at 0xb0000 (gen_iop/iop_zaudio.c, sid 0x47 is
+  LLE; `ZAUDIO_HLE=1` brings back the old stub). LIBSD.IRX is not run:
+  `libsd_N` imports are HLE in iop.c over spu2.c. Ordinals from LIBSD.IRX's
+  export table: 4 Init, 5 SetParam, 6 GetParam, 7 SetSwitch, 8 GetSwitch,
+  9 SetAddr, 10 GetAddr, 11 SetCoreAttr, 17 VoiceTrans, 18 BlockTrans,
+  19 VoiceTransStatus, 20 BlockTransStatus. Entry = core bit 0, voice bits
+  1-5, register bits 8-15 (0 VOLL 1 VOLR 2 PITCH 3 ADSR1 4 ADSR2 5 ENVX 9/a
+  MVOL; switches 13 PMON 14 NON 15 KON 16 KOFF 17 ENDX 18-1b VMIX; addr 20 SSA
+  21 LSA 22 NAX). ZAUDIO never writes VMIX: spu2_reset routes all voices dry.
+- ZAUDIO's tick: timrman hardware timer, 16666 us (USec2SysClock), handler
+  ZAUDIO+0x4150 does iSignalSema and returns the next compare. iop.c
+  run_timers() calls it from iop_run like an interrupt (own stack, 8 EE
+  cycles per 36.864 MHz tick).
+- Voice model: ADPCM with loop flags, 4.12 pitch, linear interpolation, ADSR
+  as on the PS1/PS2 SPU, fixed volumes. Not modelled: reverb (effect sends),
+  noise, pitch modulation, volume sweeps (logged as "volume reads in sweep
+  mode"), SPU IRQ. Check by ear against the real game.
+- Two IOP fixes this needed: the EE-side IOP heap (sif.c, sid 0x80000003)
+  and iop.c's thread stacks both started at 0x100000 (now 0x180000 and
+  0x100000-0x17ffff), and the RPC request queue was shared by all server
+  threads, so ZAUDIO's thread ran ZCDDVD requests with ZAUDIO's gp; each
+  sceSifRpcLoop now takes only requests for servers on its own queue.
+- Underruns: three bursts in the first 1500 frames, at single slow frames
+  (movie start / loads at frames ~140, ~388, ~1424), none in steady play.
+
+## Not written yet
+Memory card. In the GS: see "Not done" above. In audio: reverb, volume
+sweeps, noise.
+
+## Renderer requirement (user, 2026-11-16): use the GPU
+The GS renderer is to be hardware-accelerated, not a software rasteriser:
+- OpenGL 3.3 core via WGL (opengl32 is already linked; same route the PS1
+  project uses for presentation). GS framebuffers/Z-buffers = FBOs, so
+  internal resolution scaling (2x/4x) comes for free.
+- GS primitives are batched into vertex buffers and drawn as triangles/lines;
+  flush on any state change (TEX0, ALPHA, TEST, FRAME, ZBUF, SCISSOR...).
+- Textures: decode from GS local memory (PSMCT32/24/16, PSMT8/4 + CLUT) into a
+  GL texture cache keyed on TEX0 + CLUT hash, invalidated by writes to those
+  pages (host->local transfers and render-to-texture).
+- GS alpha blend ((A-B)*C+D), alpha test, DATE, fog and TEXA go in the
+  fragment shader / blend state; Z test in GL depth (32-bit Z as float depth).
+- Framebuffer readback (local->host) and FB-as-texture need FBO read/copy.
+- VU1 microprograms and VIF/GIF unpacking stay on the CPU; only GS drawing
+  and final presentation (scaling, filter, aspect) run on the GPU.
+
+## Reference: PS2Recomp (GPL-3.0) — read only, do not copy code
+Cloned at `..\ref\PS2Recomp` (commit e563698, 2026-10-23), source only, not
+built. Use it to check behaviour and numbering, never paste from it (GPL-3.0
+would spread to this project). Useful places:
+- `ps2xIOP/src/emulator/iop_emulator.cpp` — IRX modules on a virtual IOP kernel
+- `ps2xRuntime/src/lib/Kernel/Syscalls/{System,RPC}.cpp`, `Kernel/EeScheduler.cpp`
+- `ps2xRuntime/src/lib/vu/ps2_vu1_core.cpp`, `ps2_vu1_lower.cpp`, `ps2_vif1_interpreter.cpp`
+- `ps2xRuntime/src/lib/gs/gs_frontend.cpp` (GS register/primitive handling;
+  its backend is CPU-side, ours is to be GPU)
+- `Kernel/Stubs/{MPEG,Pad,MemoryCard,CD,SIF}.cpp`
+
+## ZCDDVD.IRX protocol (sid 0x45, EE client at 0x1fced0, state at 0x1fcec0)
+Reply is a 128-byte block, word 0 = result. fn: 0 init, 1 mount check (1 = ok),
+2/3 name lookup, 4 open(name[0x100]) -> {slot ptr, lsn, size}, 5 close(slot),
+6/7 read {slot, ee_dest, size, flag, cb, cbarg, ...} (async, 32 KB jobs),
+8 seek {slot, off, whence}, 9 tell -> {pos, size}, 10 stream read (32 KB).
+File slot = {lsn, size, pos, used}, 32 slots. When the last job of a read
+finishes the IOP calls back the EE RPC server sid 0x46 (EE thread entry
+0x116548, callback 0x116618) with {slot, bytes, type, arg}; types 1-4.
+
+## Launcher (built 2026-11-19, seventh session)
+`..\launcher\bmx2launcher.py` (tkinter, modelled on the PS1 dmlauncher.py),
+packaged by `sh ../launcher/build_exe.sh` (PyInstaller) to
+`Dave Mirra PS2\Dave Mirra 2 Launcher.exe`. Root = the folder holding
+`Dave Mirra 2\` / `bmx2recomp\`. CLI: `python -I launcher/bmx2launcher.py
+status|download|update|build|play|update-launcher [--disc FILE] [--root DIR]`.
+- Disc: finds a .cue/.bin/.iso in `Dave Mirra 2\`, checks SYSTEM.CNF boots
+  SLUS_201.59, reads SLUS_201.59 + ZCDDVD.IRX itself (ISO 9660 root, raw
+  2352 MODE1/2 or 2048 .iso) into `work\disc\`.
+- Generate (keyed on image + recompilers + extra_ee.txt + vu_recipe.json):
+  recomp_ee.py -> work\gen, recomp_iop.py -> work\gen_iop, VU1 snapshots
+  rebuilt from the ELF by `vu_recipe.json` (offsets of the 6 pieces of the
+  0x4000 code image in SLUS_201.59, sha256-checked, plus the .pcs entry list)
+  -> recomp_vu.py -> work\gen_vu. So no game bytes need to ship. If a new VU
+  snapshot is recorded, add it to vu_recipe.json (script in the 7th session:
+  match 8-byte-aligned runs of the .bin against the ELF).
+- Compile: per-file keyed objects in work\obj, build.sh's flags without -g,
+  `-static`, vu.c started first. Output `game\bmx2.exe` + a copy of
+  SLUS_201.59 + default `game\bmx2.ini` (never overwritten).
+- Play: `bmx2.exe --image <bin/iso> [debug flags] <game dir>`, stdout/stderr
+  to game\bmx2.log unless "console window" is ticked. "Close the launcher
+  when the game starts" option, off by default.
+- Tools: llvm-mingw 20261104 and embeddable Python 3.12.8 (same pins as the
+  PS1 launcher) into tools\; `BMX2_CLANG=<clang.exe>` uses another clang.
+- Project: REPO is empty (not published). A bmx2recomp folder without the
+  `.downloaded-by-launcher` marker is a working copy and is never replaced.
+- Runtime side: `runtime/config.c` reads bmx2.ini from the game folder
+  (scale, window_size, fullscreen, aspect, filter, frame_limit, gamepad,
+  key_* incl. sticks, exact_gs_sync / vu_mode via _putenv). No ini = old
+  defaults. F11 / Alt+Enter toggle borderless fullscreen. `--image PATH`
+  sets the disc image; cd_read also takes 2048-byte .iso images.
+
+## Field jitter (fixed 2026-11-19, seventh session)
+The whole picture bobbed by half a line every frame. The game runs field
+mode (SMODE2 = 3, 640x224 fields) and moves XYOFFSET y by +8 (0.5 line) on
+every other field (30976 / 30984), because a TV shows that field half a line
+lower. We show each field progressively, so the offset became jitter.
+`to_vertex()` in gs.c now drops the sub-line bits of XYOFFSET y in field
+mode. Checked on the intro movie: the letterbox edge row alternated
+12.5 / 9.6 brightness every frame before, steady 9.6 after. Frame pacing
+(Sleep-based, swap interval 0) was not measured and may add judder on
+high-refresh monitors.
+
+## Next step (recommended, 2026-11-19, after the sixth session)
+1. Play it in the window (real time now holds 60 in Woodward Camp) and check
+   the level against a reference picture of the real game.
+2. Find out why the game gives some textures TBP 0 (inside frame buffer 0):
+   the TEX0 values are built that way in EE RAM (657 copies), the game's
+   printf says nothing. Likely a texture-manager step that fails here. Then
+   the once-per-frame write-back approximation can go (see Performance).
+3. Settle the movie brightness question (see GS section).
+4. Audio (after the eighth session, user confirmed it works): reverb and
+   volume sweeps (spu2.c), and check effect/music balance against the game.
+   The launcher now lists ZAUDIO.IRX in IOP_MODULES; a launcher build with
+   it has not been run.

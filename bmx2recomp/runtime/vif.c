@@ -1,0 +1,292 @@
+/* VIF0 / VIF1 command processors. The DMA hands over whole quadwords; a
+ * command and its data may span transfers, so each VIF keeps its state.
+ * DIRECT/DIRECTHL feed GIF path 2, UNPACK writes VU data memory (cycle,
+ * mask, row/col and add modes), MPG writes VU micro memory, MSCAL/MSCNT
+ * start the VU (VU1 micro mode is still a stub). */
+#include "rt.h"
+
+void gif_transfer(const u8 *qw, u32 nqw, int path);
+void vu1_start(u32 pc);
+void vu_micro_run(int vu, u32 pc);
+
+typedef struct {
+    int unit;
+    u8 *mem; u32 qmask;          /* data memory, qw address mask */
+    u8 *code; u32 cmask;         /* micro memory, byte mask */
+    u32 cl, wl, mode, mask, row[4], col[4];
+    u32 base, ofst, tops, top, dbf, itops, itop, mark;
+    /* current command */
+    u32 code_w, cmd, remain, pos, align;
+    u32 buf[4]; u32 nbuf;        /* DIRECT qw / STROW / STCOL words */
+    /* UNPACK */
+    u32 addr, num, cycle, vn, vl, usn, msk, elem_bytes;
+    u8 ebuf[16]; u32 nebuf;
+    /* MPG */
+    u32 mpg_addr;
+    u32 irq, err, stat_int;      /* i-bit pending for the current command, ERR, STAT.INT */
+    int stalled;                 /* stopped after an i-bit command until FBRST.STC */
+    u32 pend[4], pendk[4], npend;
+    u64 n_irq;
+    u64 n_unpack, n_direct, n_mscal, n_mpg;
+} vif_t;
+
+static vif_t vif[2];
+int g_log_vif;
+extern u8 vu0_mem[0x1000], vu0_code[0x1000], vu1_mem[0x4000], vu1_code[0x4000];
+u32 vif1_top_value(void) { return vif[1].top; }
+u32 vif1_itop_value(void) { return vif[1].itop; }
+u32 vif0_itop_value(void) { return vif[0].itop; }
+
+static void vif_init_unit(int u) {
+    vif_t *v = &vif[u];
+    if (v->mem) return;
+    v->unit = u;
+    if (u) { v->mem = vu1_mem; v->qmask = 0x3ff; v->code = vu1_code; v->cmask = 0x3fff; }
+    else { v->mem = vu0_mem; v->qmask = 0xff; v->code = vu0_code; v->cmask = 0xfff; }
+    v->cl = v->wl = 1;
+}
+
+/* one unpacked element -> VU memory, honouring mask, mode and the write cycle */
+static void unpack_write(vif_t *v, const u32 in[4], int have_data) {
+    u32 c = v->cycle < 3 ? v->cycle : 3;
+    u32 *dst = (u32 *)(v->mem + ((v->addr & v->qmask) << 4));
+    for (int i = 0; i < 4; i++) {
+        u32 m = v->msk ? (v->mask >> ((c * 4 + i) * 2)) & 3 : 0;
+        if (!have_data && m == 0) m = 1;      /* fill cycles: no input, use the row */
+        u32 x;
+        switch (m) {
+        case 0:
+            x = in[i];
+            if (v->mode == 1) x += v->row[i];
+            else if (v->mode == 2) { v->row[i] += x; x = v->row[i]; }
+            break;
+        case 1: x = v->row[i]; break;
+        case 2: x = v->col[c]; break;
+        default: continue;
+        }
+        dst[i] = x;
+    }
+    v->addr++;
+    if (++v->cycle >= v->wl) {
+        v->cycle = 0;
+        if (v->cl > v->wl) v->addr += v->cl - v->wl;   /* skipping write */
+    }
+}
+
+static void unpack_element(vif_t *v) {
+    u32 out[4] = { 0, 0, 0, 0 };
+    int comps = v->vn + 1;
+    u8 *b = v->ebuf;
+    if (v->vl == 3) {                       /* V4-5: RGBA 5551 */
+        u32 x = b[0] | (b[1] << 8);
+        out[0] = (x & 31) << 3; out[1] = ((x >> 5) & 31) << 3; out[2] = ((x >> 10) & 31) << 3; out[3] = (x >> 15) << 7;
+    } else {
+        for (int i = 0; i < comps; i++) {
+            u32 x;
+            if (v->vl == 0) memcpy(&x, b + 4 * i, 4);
+            else if (v->vl == 1) { u16 h; memcpy(&h, b + 2 * i, 2); x = v->usn ? h : (u32)(s32)(int16_t)h; }
+            else { u8 c = b[i]; x = v->usn ? c : (u32)(s32)(int8_t)c; }
+            out[i] = x;
+        }
+        if (comps == 1) out[1] = out[2] = out[3] = out[0];
+        else if (comps == 2) { out[2] = out[0]; out[3] = out[1]; }
+        else if (comps == 3) {
+            /* w gets what follows in the stream on hardware; keep memory instead */
+            u32 *dst = (u32 *)(v->mem + ((v->addr & v->qmask) << 4));
+            out[3] = dst[3];
+        }
+    }
+    unpack_write(v, out, 1);
+}
+
+static u32 unpack_data_elements(vif_t *v, u32 num) {
+    if (v->wl <= v->cl) return num;
+    return (num / v->wl) * v->cl + (num % v->wl < v->cl ? num % v->wl : v->cl);
+}
+
+static void start_cmd(vif_t *v, u32 w) {
+    u32 cmd = (w >> 24) & 0x7f, imm = w & 0xffff, num = (w >> 16) & 0xff;
+    if (g_log_vif && (cmd || g_log_vif > 1)) LOG("vif%d: %08x cl %u wl %u tops %x\n", v->unit, w, v->cl, v->wl, v->tops);
+    v->code_w = w; v->cmd = cmd; v->remain = 0; v->nbuf = 0; v->align = 0;
+    if (cmd >= 0x60) {                                  /* UNPACK */
+        v->vn = (cmd >> 2) & 3; v->vl = cmd & 3; v->msk = (cmd >> 4) & 1;
+        v->num = num ? num : 256;
+        v->usn = (imm >> 14) & 1;
+        v->addr = imm & 0x3ff;
+        if (v->unit == 1 && (imm & 0x8000)) v->addr += v->tops;
+        v->cycle = 0;
+        static const u8 bits[4] = { 32, 16, 8, 16 };
+        v->elem_bytes = v->vl == 3 ? 2 : (v->vn + 1) * bits[v->vl] / 8;
+        u32 elems = unpack_data_elements(v, v->num);
+        v->remain = (elems * v->elem_bytes + 3) / 4;
+        v->nebuf = 0;
+        v->n_unpack++;
+        /* filling write: WL > CL, the extra cycles are written as the data
+           arrives (see unpack_word); a pure fill with no data is done here */
+        if (!v->remain) for (u32 k = 0; k < v->num; k++) { u32 z[4] = { 0 }; unpack_write(v, z, 0); }
+        return;
+    }
+    switch (cmd) {
+    case 0x00: break;                                               /* NOP */
+    case 0x01: v->cl = imm & 0xff; v->wl = (imm >> 8) & 0xff; if (!v->wl) v->wl = 256; if (!v->cl) v->cl = 256; break;
+    case 0x02: v->ofst = imm & 0x3ff; v->dbf = 0; v->tops = v->base; break;   /* OFFSET */
+    case 0x03: v->base = imm & 0x3ff; break;                       /* BASE */
+    case 0x04: v->itops = imm & 0x3ff; break;                      /* ITOP */
+    case 0x05: v->mode = imm & 3; break;                           /* STMOD */
+    case 0x06: break;                                               /* MSKPATH3 */
+    case 0x07: v->mark = imm; break;                                /* MARK */
+    case 0x10: case 0x11: case 0x13: break;                         /* FLUSHE/FLUSH/FLUSHA */
+    case 0x14: case 0x15: case 0x17:                                /* MSCAL/MSCALF/MSCNT */
+        v->n_mscal++;
+        if (v->unit == 1) {
+            v->top = v->tops; v->dbf ^= 1; v->tops = v->base + (v->dbf ? v->ofst : 0);
+            v->itop = v->itops;
+            vu1_start(cmd == 0x17 ? 0xffffffffu : imm * 8);
+        } else {
+            v->itop = v->itops;
+            if (cmd != 0x17) vu_micro_run(0, imm * 8);
+        }
+        break;
+    case 0x20: v->remain = 1; break;                                /* STMASK */
+    case 0x30: case 0x31: v->remain = 4; break;                     /* STROW/STCOL */
+    case 0x4a: v->remain = (num ? num : 256) * 2; v->mpg_addr = imm * 8; v->n_mpg++; break;   /* MPG */
+    case 0x50: case 0x51:                                           /* DIRECT/DIRECTHL */
+        if (v->unit == 1) { v->remain = (imm ? imm : 65536) * 4; v->align = 1; v->n_direct++; }
+        break;
+    default:
+        { static int once[2]; if (!once[v->unit]++) LOG("vif%d: unknown command %08x\n", v->unit, w); }
+    }
+}
+
+static void data_word(vif_t *v, u32 w) {
+    u32 cmd = v->cmd;
+    if (cmd >= 0x60) {
+        for (int i = 0; i < 4; i++) {
+            v->ebuf[v->nebuf++] = (u8)(w >> (8 * i));
+            if (v->nebuf == v->elem_bytes) {
+                v->nebuf = 0;
+                unpack_element(v);
+                /* filling: after CL data cycles the next WL-CL cycles have no data */
+                if (v->wl > v->cl) while (v->cycle >= v->cl && v->cycle != 0) { u32 z[4] = { 0 }; unpack_write(v, z, 0); }
+            }
+        }
+        if (--v->remain == 0) v->nebuf = 0;   /* padding bytes of the last word dropped */
+        return;
+    }
+    switch (cmd) {
+    case 0x20: v->mask = w; break;
+    case 0x30: v->row[4 - v->remain] = w; break;
+    case 0x31: v->col[4 - v->remain] = w; break;
+    case 0x4a: {
+        u8 *p = v->code + (v->mpg_addr & v->cmask);
+        if (memcmp(p, &w, 4)) { memcpy(p, &w, 4); if (v->code == vu1_code) { extern u32 vu1_code_gen; vu1_code_gen++; } }
+        v->mpg_addr += 4; break; }
+    case 0x50: case 0x51:
+        v->buf[v->nbuf++] = w;
+        if (v->nbuf == 4) { gif_transfer((const u8 *)v->buf, 1, 2); v->nbuf = 0; }
+        break;
+    }
+    v->remain--;
+}
+
+/* i bit: the VIF stops after the command and raises its interrupt (INTC 4/5);
+   the handler resumes it with FBRST.STC. The handler runs here, so whatever
+   it changes in memory the rest of the DMA sees. */
+static void cmd_done(vif_t *v) {
+    if (!v->irq) return;
+    v->irq = 0;
+    if (v->err & 1) return;          /* ERR.MII masks i-bit interrupts */
+    v->stat_int = 1;
+    v->stalled = 1;
+    v->n_irq++;
+    intc_raise(v->unit ? 5 : 4);
+}
+
+static void vif_word(vif_t *v, u32 w, u32 k) {
+    if (v->remain) {
+        if (v->align) { if (k != 0) return; v->align = 0; }
+        data_word(v, w);
+        if (!v->remain) cmd_done(v);
+        return;
+    }
+    start_cmd(v, w);
+    v->irq = w >> 31;
+    if (!v->remain) cmd_done(v);
+}
+
+/* words of a quadword taken in but not yet processed when the VIF stalled */
+static void keep_rest(vif_t *v, const u8 *q, u32 k) {
+    v->npend = 0;
+    for (u32 j = k + 1; j < 4; j++) { memcpy(&v->pend[v->npend], q + 4 * j, 4); v->pendk[v->npend] = j; v->npend++; }
+}
+
+static int drain_pending(vif_t *v) {
+    while (v->npend && !v->stalled) {
+        u32 w = v->pend[0], k = v->pendk[0];
+        v->npend--;
+        memmove(v->pend, v->pend + 1, v->npend * 4); memmove(v->pendk, v->pendk + 1, v->npend * 4);
+        vif_word(v, w, k);
+    }
+    return !v->stalled;
+}
+
+static u32 vif_feed(vif_t *v, const u8 *p, u32 nqw) {
+    if (v->stalled || !drain_pending(v)) return 0;
+    for (u32 q = 0; q < nqw; q++)
+        for (u32 k = 0; k < 4; k++) {
+            u32 w; memcpy(&w, p + 16 * q + 4 * k, 4);
+            vif_word(v, w, k);
+            if (v->stalled) { keep_rest(v, p + 16 * q, k); return q + 1; }
+        }
+    return nqw;
+}
+
+u32 vif1_transfer(const u8 *qw, u32 nqw) { vif_init_unit(1); return vif_feed(&vif[1], qw, nqw); }
+u32 vif0_transfer(const u8 *qw, u32 nqw) { vif_init_unit(0); return vif_feed(&vif[0], qw, nqw); }
+
+/* VIFn registers at 0x10003800 / 0x10003c00 */
+u32 vif_reg_read(int u, u32 off) {
+    vif_init_unit(u);
+    vif_t *v = &vif[u];
+    switch (off) {
+    case 0x000: return (v->stat_int ? 0x800 : 0) | (v->stalled ? 0x400 : 0) | (v->npend ? (1u << 24) : 0);
+    case 0x020: return v->err;
+    case 0x030: return v->mark;
+    case 0x040: return v->cl | (v->wl << 8);
+    case 0x050: return v->mode;
+    case 0x070: return v->mask;
+    case 0x080: return v->code_w;
+    case 0x090: return v->itops;
+    case 0x0a0: return v->base;
+    case 0x0b0: return v->ofst;
+    case 0x0c0: return v->tops;
+    case 0x0d0: return v->itop;
+    case 0x0e0: return v->top;
+    }
+    if (off >= 0x100 && off < 0x140) return v->row[(off - 0x100) >> 4];
+    if (off >= 0x140 && off < 0x180) return v->col[(off - 0x140) >> 4];
+    return 0;
+}
+void vif_reg_write(int u, u32 off, u32 val) {
+    vif_init_unit(u);
+    vif_t *v = &vif[u];
+    switch (off) {
+    case 0x010:                      /* FBRST */
+        if (val & 1) { v->remain = 0; v->align = 0; v->stat_int = 0; v->irq = 0; v->stalled = 0; v->npend = 0; }
+        if (val & 8 && v->stalled) {  /* STC: go on with the rest of the qword, then the DMA */
+            v->stat_int = 0; v->stalled = 0;
+            if (drain_pending(v)) dma_resume(u);
+        } else if (val & 8) v->stat_int = 0;
+        return;
+    case 0x020: v->err = val & 7; return;
+    case 0x030: v->mark = val & 0xffff; return;
+    }
+    if (g_log_vif) LOG("vif%d: write %03x = %08x ignored\n", u, off, val);
+}
+
+void vif_stats(void) {
+    for (int u = 0; u < 2; u++)
+        LOG("vif%d: %llu unpacks, %llu direct, %llu mpg, %llu mscal, %llu irq\n", u, (unsigned long long)vif[u].n_unpack,
+            (unsigned long long)vif[u].n_direct, (unsigned long long)vif[u].n_mpg, (unsigned long long)vif[u].n_mscal,
+            (unsigned long long)vif[u].n_irq);
+}
