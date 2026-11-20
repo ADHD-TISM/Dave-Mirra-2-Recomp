@@ -226,6 +226,34 @@ loads now. Causes, in order of effect:
    mismatches over 3.67M runs.
 Left: ~70 frames of 18-21 ms in the level, and single long frames at loads.
 
+## Graphics thread + vsync (2026-11-19, tenth session)
+User: still stutter; asked to sync to the display and to move work off the
+main thread. Measured (real time, window on the 60 Hz Dell, route to frame
+9400): GPU 3D engine 8-10% busy, CPU one core full. Presentation gaps over
+20 ms after frame 6600 (frames shown twice): 447 before, 26 now. EE slow
+frames 125 -> 40. No audio underruns in the level either way.
+- Vsync (gs_gl.c choose_vsync): at a 60/120/180/240 Hz monitor the swap
+  interval is refresh/60 and the timer paces 60.00 Hz instead of 59.94 (the
+  swap alone does not hold the rate: in a window the compositor followed the
+  120 Hz primary). Off: `vsync = 0` in bmx2.ini or NO_VSYNC=1. Audio: the
+  waveOut thread skips 1 frame in 256 while more than ~64 ms is queued
+  (exit line "frames dropped for drift").
+- Graphics thread (runtime/gsthread.c): VIF1, VU1, the GS front end and all
+  GL run on a worker. The EE copies VIF1 DMA data and GIF path 3 data into a
+  64 MB ring; a scan-only VIF1 (vif.c unit 2) on the EE follows the stream for
+  i-bit stalls/interrupts and VIF1 register reads; the worker's VIF1 ignores i
+  bits. VU1 starts from CTC2 vi31 are queued. PRESENT carries a copy of the GS
+  privileged registers. SIGNAL/FINISH are posted and applied to CSR in
+  ee_event / on CSR reads (poll-skip leaves CSR alone while the worker is
+  busy). The EE waits when more than 2 frames are queued and drains the
+  worker before the exit stats. Off: `gs_thread = 0` or GS_THREAD=0.
+- Not covered: EE writes to VU1 memory through the 0x11008000/0x1100c000
+  mapping would race with the worker (the game has no constant references to
+  them); GS -> EE downloads are not implemented at all. VU_CHECK and the
+  VU1 recompile run on the worker unchanged.
+- Exit lines: "gst: N commands, ... waits for frames", "gs: N presents, X
+  gaps over 20 ms (Y after frame 6600 ...)".
+
 ## VU1 static recompile (2026-11-19, sixth session)
 The game loads one VU1 program (hash 67ff695f7ff5f9a4) at boot and keeps it
 through intro, menus and Woodward Camp.

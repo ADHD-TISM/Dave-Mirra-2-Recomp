@@ -60,7 +60,7 @@ static u32 dma_send(int ch, const u8 *p, u32 nqw) {
     switch (ch) {
     case 0: return vif0_transfer(p, nqw);
     case 1: return vif1_transfer(p, nqw);
-    case 2: gif_transfer(p, nqw, 3); return nqw;
+    case 2: gif_dma(p, nqw, 3); return nqw;
     case 9: {
         u32 sadr = dma_regs[9][8] & 0x3ff0;
         for (u32 k = 0; k < nqw; k++) { memcpy(ee_spr + sadr, p + 16 * k, 16); sadr = (sadr + 16) & 0x3ff0; }
@@ -211,7 +211,7 @@ static u32 io_read32_raw(u32 a) {
         return io_store[off / 4];
     }
     if (pa >= 0x12000000 && pa < 0x12002000) {
-        if (pa == 0x12001000) return gs_csr;
+        if (pa == 0x12001000) { gst_apply_csr(); return gs_csr; }
         if (pa == 0x12001010) return gs_imr;
         return (u32)gs_priv[(pa >> 4) & 0x1f];
     }
@@ -229,7 +229,8 @@ static u32 io_read32_raw(u32 a) {
 u64 n_poll_skips, n_poll_skipped_cycles;
 static inline int pollable(u32 pa) {
     if (pa >= 0x10000000 && pa < 0x10003000) return 0;     /* timers, IPU */
-    return (pa >= 0x10003000 && pa < 0x10010000) || pa == 0x12001000;
+    /* CSR while the graphics thread works: FINISH may still come from it, so keep polling */
+    return (pa >= 0x10003000 && pa < 0x10010000) || (pa == 0x12001000 && !gst_busy());
 }
 u32 io_read32(u32 a) {
     u32 v = io_read32_raw(a), pa = a & 0x1fffffff;
@@ -330,7 +331,7 @@ void io_write128(u32 a, const r128 *v) {
     u32 pa = a & 0x1fffffff;
     if (pa == 0x10004000) { vif0_transfer(v->b, 1); return; }
     if (pa == 0x10005000) { vif1_transfer(v->b, 1); return; }
-    if (pa == 0x10006000) { gif_transfer(v->b, 1, 3); return; }
+    if (pa == 0x10006000) { gif_dma(v->b, 1, 3); return; }
     if (pa == 0x10007010) { ipu_fifo_write(v->b); return; }
     io_write64(a, v->d[0]);
 }

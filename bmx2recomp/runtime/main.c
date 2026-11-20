@@ -91,6 +91,7 @@ void check_frame_limit(void) {
         extern void kernel_dump(void);
         LOG("frame limit reached\n"); kernel_dump(); ipu_stats();
         if (getenv("EE_DUMP")) { FILE *f = fopen(getenv("EE_DUMP"), "wb"); if (f) { fwrite(ee_ram, 1, 32 << 20, f); fclose(f); } }
+        gst_sync(); gst_stats();
         { void gsgl_stats(void), vif_stats(void), vu_stats(void); gsgl_stats(); vif_stats(); vu_stats(); spu2_stats(); }
         { extern u64 n_poll_skips, n_poll_skipped_cycles;
           LOG("hw: %llu poll loops skipped ahead, %.1f s of emulated time\n", (unsigned long long)n_poll_skips, n_poll_skipped_cycles / 294912000.0); }
@@ -134,6 +135,7 @@ int main(int argc, char **argv) {
     hw_init();
     { void ipu_init(void); ipu_init(); }
     { void gs_init(int, int); gs_init(show_window, gs_scale); }
+    gst_init();
     spu2_init();
     load_elf(elf_name);
     sif_init();

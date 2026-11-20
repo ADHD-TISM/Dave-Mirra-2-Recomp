@@ -32,7 +32,7 @@ static u64 start_cyc; static int started;
 
 typedef struct { int on; u32 addr, size; u64 start; u16 vol_l, vol_r; } bt_t;
 static bt_t bt[2];
-u64 n_spu_frames, n_spu_underruns;
+u64 n_spu_frames, n_spu_underruns, n_spu_dropped;
 static FILE *wav; static u32 wav_frames;
 static void wav_header(void); static void wav_close(void);
 
@@ -346,9 +346,15 @@ static DWORD WINAPI audio_thread(void *p) {
                 hdr[k].dwBufferLength = MINF * 4;
                 if (g_frame > 120) { n_spu_underruns++; if (g_log_sys && n_spu_underruns <= 60) LOG("spu2: underrun at frame %llu\n", (unsigned long long)g_frame); }
             } else {
-                u32 r0 = rd;
-                for (u32 i = 0; i < n; i++) wbuf[k][i] = ring[(r0 + i) & (RING - 1)];
-                rd = r0 + n;
+                /* With vsync pacing the game runs at the display's 60.00 Hz instead
+                 * of 59.94, so it mixes 48048 frames a second for a 48000 device.
+                 * While more than ~64 ms is waiting, skip 1 frame in 256 (inaudible). */
+                u32 r0 = rd, src = 0, drop = avail > 3 * WBUF;
+                for (u32 i = 0; i < n; i++, src++) {
+                    if (drop && i && (i & 255) == 0 && src + 1 < avail) { src++; n_spu_dropped++; }
+                    wbuf[k][i] = ring[(r0 + src) & (RING - 1)];
+                }
+                rd = r0 + src;
                 hdr[k].dwBufferLength = n * 4;
             }
             hdr[k].dwFlags &= ~WHDR_DONE;
@@ -380,5 +386,6 @@ void spu2_init(void) {
 
 void spu2_stats(void) {
     LOG("spu2: %llu key-ons, %llu volume reads in sweep mode (not modelled)\n", (unsigned long long)n_kon, (unsigned long long)n_sweep_vol);
-    LOG("spu2: %llu frames mixed, %llu output underruns\n", (unsigned long long)n_spu_frames, (unsigned long long)n_spu_underruns);
+    LOG("spu2: %llu frames mixed, %llu output underruns, %llu frames dropped for drift\n", (unsigned long long)n_spu_frames,
+        (unsigned long long)n_spu_underruns, (unsigned long long)n_spu_dropped);
 }

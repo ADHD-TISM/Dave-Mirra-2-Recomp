@@ -26,11 +26,16 @@ typedef struct {
     u32 irq, err, stat_int;      /* i-bit pending for the current command, ERR, STAT.INT */
     int stalled;                 /* stopped after an i-bit command until FBRST.STC */
     u32 pend[4], pendk[4], npend;
+    int scan;                    /* unit 2: scan-only VIF1 on the EE thread (gsthread.c): state, i bits, no writes */
+    int no_irq;                  /* the worker's VIF1: i bits are the scan unit's business */
+    int inited;
     u64 n_irq;
     u64 n_unpack, n_direct, n_mscal, n_mpg;
 } vif_t;
 
-static vif_t vif[2];
+static vif_t vif[3];          /* 0 VIF0, 1 VIF1, 2 VIF1 scan copy (graphics thread on) */
+extern int g_gs_mt;
+void gst_vif1(const u8 *p, u32 nqw); void gst_vif1_reset(void); void gst_vif1_reg(u32 off, u32 val);
 int g_log_vif;
 extern u8 vu0_mem[0x1000], vu0_code[0x1000], vu1_mem[0x4000], vu1_code[0x4000];
 u32 vif1_top_value(void) { return vif[1].top; }
@@ -39,7 +44,10 @@ u32 vif0_itop_value(void) { return vif[0].itop; }
 
 static void vif_init_unit(int u) {
     vif_t *v = &vif[u];
-    if (v->mem) return;
+    if (v->inited) return;
+    v->inited = 1;
+    v->scan = u == 2;
+    if (u == 2) u = 1;
     v->unit = u;
     if (u) { v->mem = vu1_mem; v->qmask = 0x3ff; v->code = vu1_code; v->cmask = 0x3fff; }
     else { v->mem = vu0_mem; v->qmask = 0xff; v->code = vu0_code; v->cmask = 0xfff; }
@@ -64,7 +72,7 @@ static void unpack_write(vif_t *v, const u32 in[4], int have_data) {
         case 2: x = v->col[c]; break;
         default: continue;
         }
-        dst[i] = x;
+        if (!v->scan) dst[i] = x;
     }
     v->addr++;
     if (++v->cycle >= v->wl) {
@@ -93,7 +101,7 @@ static void unpack_element(vif_t *v) {
         else if (comps == 3) {
             /* w gets what follows in the stream on hardware; keep memory instead */
             u32 *dst = (u32 *)(v->mem + ((v->addr & v->qmask) << 4));
-            out[3] = dst[3];
+            out[3] = v->scan ? 0 : dst[3];
         }
     }
     unpack_write(v, out, 1);
@@ -106,7 +114,7 @@ static u32 unpack_data_elements(vif_t *v, u32 num) {
 
 static void start_cmd(vif_t *v, u32 w) {
     u32 cmd = (w >> 24) & 0x7f, imm = w & 0xffff, num = (w >> 16) & 0xff;
-    if (g_log_vif && (cmd || g_log_vif > 1)) LOG("vif%d: %08x cl %u wl %u tops %x\n", v->unit, w, v->cl, v->wl, v->tops);
+    if (g_log_vif && !v->scan && (cmd || g_log_vif > 1)) LOG("vif%d: %08x cl %u wl %u tops %x\n", v->unit, w, v->cl, v->wl, v->tops);
     v->code_w = w; v->cmd = cmd; v->remain = 0; v->nbuf = 0; v->align = 0;
     if (cmd >= 0x60) {                                  /* UNPACK */
         v->vn = (cmd >> 2) & 3; v->vl = cmd & 3; v->msk = (cmd >> 4) & 1;
@@ -141,7 +149,7 @@ static void start_cmd(vif_t *v, u32 w) {
         if (v->unit == 1) {
             v->top = v->tops; v->dbf ^= 1; v->tops = v->base + (v->dbf ? v->ofst : 0);
             v->itop = v->itops;
-            vu1_start(cmd == 0x17 ? 0xffffffffu : imm * 8);
+            if (!v->scan) vu1_start(cmd == 0x17 ? 0xffffffffu : imm * 8);
         } else {
             v->itop = v->itops;
             if (cmd != 0x17) vu_micro_run(0, imm * 8);
@@ -179,11 +187,11 @@ static void data_word(vif_t *v, u32 w) {
     case 0x31: v->col[4 - v->remain] = w; break;
     case 0x4a: {
         u8 *p = v->code + (v->mpg_addr & v->cmask);
-        if (memcmp(p, &w, 4)) { memcpy(p, &w, 4); if (v->code == vu1_code) { extern u32 vu1_code_gen; vu1_code_gen++; } }
+        if (!v->scan && memcmp(p, &w, 4)) { memcpy(p, &w, 4); if (v->code == vu1_code) { extern u32 vu1_code_gen; vu1_code_gen++; } }
         v->mpg_addr += 4; break; }
     case 0x50: case 0x51:
         v->buf[v->nbuf++] = w;
-        if (v->nbuf == 4) { gif_transfer((const u8 *)v->buf, 1, 2); v->nbuf = 0; }
+        if (v->nbuf == 4) { if (!v->scan) gif_transfer((const u8 *)v->buf, 1, 2); v->nbuf = 0; }
         break;
     }
     v->remain--;
@@ -194,6 +202,7 @@ static void data_word(vif_t *v, u32 w) {
    it changes in memory the rest of the DMA sees. */
 static void cmd_done(vif_t *v) {
     if (!v->irq) return;
+    if (v->no_irq) { v->irq = 0; return; }
     v->irq = 0;
     if (v->err & 1) return;          /* ERR.MII masks i-bit interrupts */
     v->stat_int = 1;
@@ -241,11 +250,24 @@ static u32 vif_feed(vif_t *v, const u8 *p, u32 nqw) {
     return nqw;
 }
 
-u32 vif1_transfer(const u8 *qw, u32 nqw) { vif_init_unit(1); return vif_feed(&vif[1], qw, nqw); }
+u32 vif1_transfer(const u8 *qw, u32 nqw) {
+    if (g_gs_mt) {               /* scan on the EE (i bits, registers), the real work on the graphics thread */
+        vif_init_unit(2);
+        u32 taken = vif_feed(&vif[2], qw, nqw);
+        gst_vif1(qw, taken);
+        return taken;
+    }
+    vif_init_unit(1); return vif_feed(&vif[1], qw, nqw);
+}
+/* graphics thread */
+u32 vif1_worker_feed(const u8 *p, u32 nqw) { vif_init_unit(1); vif[1].no_irq = 1; return vif_feed(&vif[1], p, nqw); }
+void vif1_worker_reset(void) { vif_t *v = &vif[1]; vif_init_unit(1); v->remain = 0; v->align = 0; v->stat_int = 0; v->irq = 0; v->stalled = 0; v->npend = 0; }
+void vif1_worker_reg(u32 off, u32 val) { vif_init_unit(1); if (off == 0x020) vif[1].err = val & 7; else if (off == 0x030) vif[1].mark = val & 0xffff; }
 u32 vif0_transfer(const u8 *qw, u32 nqw) { vif_init_unit(0); return vif_feed(&vif[0], qw, nqw); }
 
 /* VIFn registers at 0x10003800 / 0x10003c00 */
 u32 vif_reg_read(int u, u32 off) {
+    if (u == 1 && g_gs_mt) u = 2;   /* the scan copy is where the EE's view of VIF1 lives */
     vif_init_unit(u);
     vif_t *v = &vif[u];
     switch (off) {
@@ -268,6 +290,23 @@ u32 vif_reg_read(int u, u32 off) {
     return 0;
 }
 void vif_reg_write(int u, u32 off, u32 val) {
+    int mt = u == 1 && g_gs_mt;
+    if (mt) {
+        if (off == 0x010 && (val & 1)) gst_vif1_reset();
+        if (off == 0x020 || off == 0x030) gst_vif1_reg(off, val);
+        vif_init_unit(2);
+        vif_t *v = &vif[2];
+        switch (off) {
+        case 0x010:
+            if (val & 1) { v->remain = 0; v->align = 0; v->stat_int = 0; v->irq = 0; v->stalled = 0; v->npend = 0; }
+            if (val & 8 && v->stalled) { v->stat_int = 0; v->stalled = 0; if (drain_pending(v)) dma_resume(1); }
+            else if (val & 8) v->stat_int = 0;
+            return;
+        case 0x020: v->err = val & 7; return;
+        case 0x030: v->mark = val & 0xffff; return;
+        }
+        return;
+    }
     vif_init_unit(u);
     vif_t *v = &vif[u];
     switch (off) {
@@ -285,8 +324,8 @@ void vif_reg_write(int u, u32 off, u32 val) {
 }
 
 void vif_stats(void) {
-    for (int u = 0; u < 2; u++)
-        LOG("vif%d: %llu unpacks, %llu direct, %llu mpg, %llu mscal, %llu irq\n", u, (unsigned long long)vif[u].n_unpack,
+    for (int u = 0; u < 3; u++)
+        if (vif[u].inited || u < 2) LOG("vif%s: %llu unpacks, %llu direct, %llu mpg, %llu mscal, %llu irq\n", u == 2 ? "1 (EE scan)" : u ? "1" : "0", (unsigned long long)vif[u].n_unpack,
             (unsigned long long)vif[u].n_direct, (unsigned long long)vif[u].n_mpg, (unsigned long long)vif[u].n_mscal,
             (unsigned long long)vif[u].n_irq);
 }

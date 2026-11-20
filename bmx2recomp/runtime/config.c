@@ -1,13 +1,14 @@
 /* bmx2.ini reader (see config.h). Format: `name = value` lines, # or ; comments. */
 #include "rt.h"
 #include "config.h"
+int g_gs_thread_cfg = 1;   /* gsthread.c: 0 = graphics on the EE thread */
 #include <ctype.h>
 #include <stdlib.h>
 #include <windows.h>
 
 bmx2_cfg g_cfg = {
     .scale = 0, .window_w = 0, .window_h = 0, .fullscreen = 0, .stretch = 0, .smooth = 1,
-    .frame_limit = 1, .gamepad = 1,
+    .frame_limit = 1, .vsync = 1, .gamepad = 1,
     .keys = {
         [CFG_UP] = { VK_UP }, [CFG_DOWN] = { VK_DOWN }, [CFG_LEFT] = { VK_LEFT }, [CFG_RIGHT] = { VK_RIGHT },
         [CFG_START] = { VK_RETURN }, [CFG_SELECT] = { VK_BACK, VK_RSHIFT },
@@ -62,6 +63,8 @@ static void set(const char *k, char *v, int line) {
     else if (!_stricmp(k, "aspect")) g_cfg.stretch = !_stricmp(v, "stretch");
     else if (!_stricmp(k, "filter")) g_cfg.smooth = _stricmp(v, "nearest") != 0;
     else if (!_stricmp(k, "frame_limit")) g_cfg.frame_limit = as_bool(v);
+    else if (!_stricmp(k, "vsync")) g_cfg.vsync = as_bool(v);
+    else if (!_stricmp(k, "gs_thread")) g_gs_thread_cfg = as_bool(v);
     else if (!_stricmp(k, "gamepad")) g_cfg.gamepad = as_bool(v);
     /* debug switches the runtime reads from the environment (once, lazily) */
     else if (!_stricmp(k, "exact_gs_sync")) { if (as_bool(v)) _putenv("GS_EXACT_SYNC=1"); }

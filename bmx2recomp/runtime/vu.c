@@ -521,6 +521,7 @@ static void vu_interp_state(vu_t *v, u32 pc, int n, int end_after, int branch_pe
 }
 
 void vu1_start(u32 pc) { vu_run(1, pc); }
+void vu_init(void) { vu_setup(); }
 void vu_micro_run(int vu, u32 pc) { vu_run(vu ? 1 : 0, pc); }
 
 void vu_stats(void) {

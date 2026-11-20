@@ -15,6 +15,7 @@ typedef struct {
     int stretch;            /* 1 = fill the window instead of 4:3 */
     int smooth;             /* 1 = linear filter when enlarging, 0 = nearest */
     int frame_limit;        /* 0 = run as fast as possible */
+    int vsync;              /* 1 = present in step with a 60/120 Hz display (gs_gl.c choose_vsync) */
     int gamepad;            /* 0 = ignore XInput pads */
     int keys[CFG_NKEYS][2]; /* virtual-key codes, 0 = none */
 } bmx2_cfg;

@@ -180,13 +180,19 @@ static void frame_stat(double ms) {
 
 static void pace(void) {
     static LARGE_INTEGER done; static int have;
+    extern int gsgl_vsync_paced(void); extern double gsgl_swap_wait_ms(void);
     LARGE_INTEGER now; QueryPerformanceCounter(&now);
-    if (have) frame_stat((double)(now.QuadPart - done.QuadPart) * 1000.0 / perf_freq.QuadPart);
+    int vs = gsgl_vsync_paced();
+    if (have) frame_stat((double)(now.QuadPart - done.QuadPart) * 1000.0 / perf_freq.QuadPart - (vs && !g_gs_mt ? gsgl_swap_wait_ms() : 0));
     have = 1;
     if (g_turbo) { done = now; return; }
     static int period;
     if (!period) { period = 1; timeBeginPeriod(1); }   /* else Sleep() rounds to ~15.6 ms and frames run late */
-    double target = (double)perf_freq.QuadPart * 1001.0 / 60000.0;
+    /* 59.94 Hz like the PS2, or 60.00 with vsync on a 60 Hz display: the swap
+     * alone does not hold the rate (in a window, the compositor followed the
+     * 120 Hz primary monitor), so the timer keeps the cadence and vsync only
+     * lines presentation up with the scan-out. */
+    double target = vs ? (double)perf_freq.QuadPart / 60.0 : (double)perf_freq.QuadPart * 1001.0 / 60000.0;
     double el = (double)(now.QuadPart - perf_last.QuadPart);
     if (el < target) {
         DWORD ms = (DWORD)((target - el) * 1000.0 / perf_freq.QuadPart);
@@ -208,6 +214,7 @@ static void recompute_next(void) {
 void ee_set_event(u64 at) { if (at < ee.next_event) ee.next_event = at; }
 
 void ee_event(void) {
+    gst_apply_csr();   /* SIGNAL/FINISH posted by the graphics thread */
     if (ee.cycles >= next_vbon) {
         next_vbon += FRAME_CYC; g_frame++;
         { extern void check_frame_limit(void); check_frame_limit(); }

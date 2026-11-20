@@ -104,6 +104,12 @@ GLF(X)
 static HWND wnd;
 static HDC dc;
 static int shown, S = 2;
+static BOOL (WINAPI *swap_interval_fn)(int);
+static int vsync_interval, frames_since_check;
+static double swap_wait_ms;
+static HGLRC glrc;
+static u64 n_presents, n_present_gaps, n_present_gaps_late; static double present_gap_max;
+static void choose_vsync(void);
 
 /* borderless fullscreen on the window's monitor (F11 or Alt+Enter toggles) */
 static RECT saved_rect; static int is_full;
@@ -1004,14 +1010,64 @@ static void present_rect_(u32 fbp, u32 fbw, u32 psm, u32 dbx, u32 dby, u32 w, u3
         glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
         glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
     }
+    if (frames_since_check++ % 120 == 0) choose_vsync();
+    LARGE_INTEGER t0, t1, fq; QueryPerformanceCounter(&t0);
     SwapBuffers(dc);
+    QueryPerformanceCounter(&t1); QueryPerformanceFrequency(&fq);
+    swap_wait_ms = (double)(t1.QuadPart - t0.QuadPart) * 1000.0 / fq.QuadPart;
+    {   /* time between presents as the screen gets them: a gap over 20 ms is a frame shown twice */
+        static LARGE_INTEGER last; static int have;
+        if (have && g_frame > 60) {
+            double gap = (double)(t1.QuadPart - last.QuadPart) * 1000.0 / fq.QuadPart;
+            n_presents++;
+            if (gap > 20) { n_present_gaps++; if (g_frame > 6600) n_present_gaps_late++; }
+            if (gap > present_gap_max && g_frame > 6600) present_gap_max = gap;
+        }
+        have = 1; last = t1;
+    }
 }
+
+/* Frame pacing by the display. With vsync off the game paced itself to the
+ * PS2's 59.94 Hz while a 60 Hz monitor scans out at 60.00: the two drift, and
+ * every ~16 s a frame is shown twice or skipped, plus uneven frame timing.
+ * If the window's monitor runs at 60 Hz (or 120/180/240 Hz), swap with
+ * interval refresh/60 and let SwapBuffers pace the game (pace() in kernel.c
+ * then does not sleep). Other refresh rates, a hidden window, turbo or
+ * NO_VSYNC=1 keep the timer pacing with vsync off. Checked again every 120
+ * presents, so moving the window to another monitor switches mode. */
+static int display_hz(void) {
+    HMONITOR m = MonitorFromWindow(wnd, MONITOR_DEFAULTTONEAREST);
+    MONITORINFOEXA mi; mi.cbSize = sizeof mi;
+    if (!GetMonitorInfoA(m, (MONITORINFO *)&mi)) return 0;
+    DEVMODEA dm; memset(&dm, 0, sizeof dm); dm.dmSize = sizeof dm;
+    if (!EnumDisplaySettingsA(mi.szDevice, ENUM_CURRENT_SETTINGS, &dm)) return 0;
+    return (int)dm.dmDisplayFrequency;
+}
+static void choose_vsync(void) {
+    static int no_vsync = -1;
+    if (no_vsync < 0) no_vsync = getenv("NO_VSYNC") != 0 || !g_cfg.vsync;
+    int want = 0, hz = shown ? display_hz() : 0;
+    if (shown && !g_turbo && !no_vsync && swap_interval_fn)
+        for (int k = 1; k <= 4; k++) if (hz >= 59 * k && hz <= 61 * k) { want = k; break; }
+    if (want != vsync_interval) {
+        swap_interval_fn(want);
+        vsync_interval = want;
+        LOG("gs: %s (display %d Hz)\n", want ? "frames paced by vsync" : "vsync off, timer pacing", hz);
+    }
+}
+int gsgl_vsync_paced(void) { return vsync_interval > 0; }
+/* the graphics thread (gsthread.c) takes the context over from the EE thread */
+void gsgl_unbind_context(void) { wglMakeCurrent(NULL, NULL); }
+void gsgl_bind_context(void) { if (!wglMakeCurrent(dc, glrc)) LOG("gs: cannot make the GL context current on the graphics thread\n"); }
+double gsgl_swap_wait_ms(void) { return swap_wait_ms; }
 
 void gsgl_stats(void) {
     LOG("gs: %llu batches, %llu vertices, %llu targets made, %llu downloads (%llu page rows), %llu texture decodes, %llu batches off screen\n",
         (unsigned long long)n_batches, (unsigned long long)n_draw_verts, (unsigned long long)n_targets_made,
         (unsigned long long)n_downloads, (unsigned long long)n_dl_rows, (unsigned long long)n_decodes, (unsigned long long)n_culled);
     LOG("gs: %llu texture reads used an earlier write-back, %llu async read-backs\n", (unsigned long long)n_sync_skipped, (unsigned long long)n_async_reads);
+    if (n_presents) LOG("gs: %llu presents, %llu gaps over 20 ms (%llu after frame 6600, longest %.1f ms there)\n",
+        (unsigned long long)n_presents, (unsigned long long)n_present_gaps, (unsigned long long)n_present_gaps_late, present_gap_max);
     if (ft_from_cyc) {
         double all = (double)(__rdtsc() - ft_from_cyc);
         LOG("gs: since FT_FROM: texture %.1f%%, state %.1f%%, draw %.1f%%, present %.1f%% of wall cycles; %llu self-copies\n",
@@ -1055,12 +1111,12 @@ int gsgl_init(int show_window, int scale) {
     if (!create) { LOG("gs: wglCreateContextAttribsARB missing\n"); return 0; }
     const int attrs[] = { 0x2091, 3, 0x2092, 3, 0x9126, 1, 0 };   /* 3.3 core */
     HGLRC core = create(dc, NULL, attrs);
+    glrc = core;
     if (!core) { LOG("gs: no OpenGL 3.3 core context\n"); return 0; }
     wglMakeCurrent(dc, core);
     wglDeleteContext(legacy);
-    typedef BOOL (WINAPI *swap_fn)(int);
-    swap_fn swap = (swap_fn)(void *)wglGetProcAddress("wglSwapIntervalEXT");
-    if (swap) swap(0);   /* the kernel paces frames */
+    swap_interval_fn = (BOOL (WINAPI *)(int))(void *)wglGetProcAddress("wglSwapIntervalEXT");
+    if (swap_interval_fn) swap_interval_fn(0);   /* choose_vsync() decides at the first present */
 #define X(r, n, a) n = (r (APIENTRY *) a)(void *)wglGetProcAddress(#n); if (!n) { LOG("gs: missing %s\n", #n); return 0; }
     GLF(X)
 #undef X

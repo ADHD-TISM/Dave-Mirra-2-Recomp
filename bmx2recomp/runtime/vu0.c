@@ -176,7 +176,7 @@ void vu0_ctc2(int rt, int r) {
     if (r == 21) { ee.vi_reg.u = v; return; }
     if (r == 22) { ee.vq.u = v; return; }
     if (r == 28) { return; }            /* FBRST */
-    if (r == 31) { ee.vi[31] = v; vu1_start((v & 0x7ff) * 8); return; }
+    if (r == 31) { ee.vi[31] = v; if (g_gs_mt) gst_vu1_start((v & 0x7ff) * 8); else vu1_start((v & 0x7ff) * 8); return; }
     ee.vi[r] = v;
 }
 int vu0_bc2(void) { return 0; }

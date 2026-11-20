@@ -349,11 +349,13 @@ static void gs_write_reg(u32 r, u64 v) {
     case TRXDIR: R[r] = v; trxdir_write((u32)v & 3); return;
     case HWREG: { u8 b[8]; memcpy(b, &v, 8); xfer_data(b, 8); return; }
     case SIGNAL:
+        if (g_gs_mt) { gst_post_csr(1); return; }    /* graphics thread: the EE applies it (gst_apply_csr) */
         gs_csr |= 1;
         if (!(gs_imr & 0x100)) intc_raise(0);
         return;
     case FINISH:
         gsgl_flush();
+        if (g_gs_mt) { gst_post_csr(2); return; }
         gs_csr |= 2;
         if (!(gs_imr & 0x200)) intc_raise(0);
         return;
@@ -431,12 +433,14 @@ void gif_transfer(const u8 *p, u32 nqw, int path) {
 }
 
 /* ---- display ------------------------------------------------------------- */
-static void present(void) {
-    u64 pmode = gs_priv[0], smode2 = gs_priv[2];
+/* priv: the GS privileged registers as they were at this vblank (a copy when
+ * the graphics thread presents, so the EE may flip DISPFB right after) */
+void gs_present_from(const u64 *priv) {
+    u64 pmode = priv[0], smode2 = priv[2];
     int circ = (pmode & 1) ? 0 : (pmode & 2) ? 1 : -1;
     static u64 last_dispfb = ~0ull, last_display = ~0ull, last_pmode = ~0ull;
     if (circ < 0) { gsgl_present_rect(0, 0, 0, 0, 0, 0, 0); return; }
-    u64 dispfb = gs_priv[7 + 2 * circ], display = gs_priv[8 + 2 * circ];
+    u64 dispfb = priv[7 + 2 * circ], display = priv[8 + 2 * circ];
     u32 fbp = F(dispfb, 0, 9) * 32, fbw = F(dispfb, 9, 6), psm = F(dispfb, 15, 5);
     u32 dbx = F(dispfb, 32, 11), dby = F(dispfb, 43, 11);
     u32 magh = F(display, 23, 4) + 1, magv = F(display, 27, 2) + 1;
@@ -451,8 +455,13 @@ static void present(void) {
     gsgl_present_rect(fbp, fbw, psm, dbx, dby, w, h);
 }
 
+/* EE side: GIF path 3 (DMA ch2, GIF FIFO) */
+void gif_dma(const u8 *p, u32 nqw, int path) {
+    if (g_gs_mt) gst_gif(p, nqw, path); else gif_transfer(p, nqw, path);
+}
+
 void gs_vsync(void) {
-    present();
+    if (g_gs_mt) gst_present(gs_priv); else gs_present_from(gs_priv);
     gsgl_pump();
     {   /* LOG_GS_FROM=<frame> LOG_GS_LEVEL=<n>: switch GS logging on late */
         static int init; static u64 from; static int lvl;

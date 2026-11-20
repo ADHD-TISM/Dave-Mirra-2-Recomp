@@ -34,6 +34,11 @@ void spu2_set_addr(u32 e, u32 a); u32 spu2_get_addr(u32 e); void spu2_core_attr(
 extern int g_log_spu;
 void spu2_block_start(int ch, u32 addr, u32 size); void spu2_block_stop(int ch); u32 spu2_block_status(int ch);
 extern int g_no_audio;
+/* gsthread.c: graphics worker (VIF1, VU1, GS, OpenGL) */
+extern int g_gs_mt;
+void gst_init(void); void gst_sync(void); void gst_stats(void); int gst_busy(void); void gst_apply_csr(void);
+void gst_present(const u64 *priv); void gst_gif(const u8 *p, u32 nqw, int path); void gst_post_csr(u32 bits);
+void gst_vu1_start(u32 pc); void gif_dma(const u8 *p, u32 nqw, int path);
 u32  sif_get_reg(u32 r);
 void sif_set_reg(u32 r, u32 v);
 int  sif_set_dma(u32 list, int n);
