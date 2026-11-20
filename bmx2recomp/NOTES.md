@@ -330,9 +330,26 @@ to disc\missing_entries.txt. Expect more in screens not visited yet.
 - Underruns: three bursts in the first 1500 frames, at single slow frames
   (movie start / loads at frames ~140, ~388, ~1424), none in steady play.
 
+## Memory card (2026-11-19, eleventh session) — save and load work
+`runtime/mc.c`: HLE MCSERV (sid 0x80000400) over host files; the game's own
+EE libmc (SCE 2200, old v1 protocol) runs unchanged, MCMAN/MCSERV are not.
+Card 1 = `memcard\mc0\` in the run folder (disc\ for build\bmx2.exe,
+game\ for the launcher's build, which a rebuild never deletes); every card
+directory/file is a host one. Slot 2 is empty (GetInfo -10).
+- Request layouts and fn numbers are in the comment at the top of mc.c (from
+  libmc at 0x1e5cd0..0x1e7338). Read writes straight into the EE buffer and
+  zeroes the head/tail counts the end callback (0x1e62d0) would copy; Write
+  takes the head bytes from the request and the body from EE RAM.
+- Checked: Options -> Save Game -> slot 1 -> Save writes
+  BASLUS-20159BMX2GAME\ (BMX2SAVE.DAT 24704 B, bmxicon.ico, icon.sys,
+  BASLUS-20159BMX2GAME) and shows "SAVE COMPLETE"; after a reboot Load Game
+  shows "LOAD COMPLETE". The game also opens BMX2PARK.DAT / BMX2RPLY.DAT
+  (park editor, replays) at boot. `--log-mc` logs every call.
+- Not done: SetFileInfo only renames; free space is a fixed 7000 clusters;
+  no PS1 cards, no real .ps2 card image (a folder, not an 8 MB file).
+
 ## Not written yet
-Memory card. In the GS: see "Not done" above. In audio: reverb, volume
-sweeps, noise.
+In the GS: see "Not done" above. In audio: reverb, volume sweeps, noise.
 
 ## Renderer requirement (user, 2026-11-16): use the GPU
 The GS renderer is to be hardware-accelerated, not a software rasteriser:

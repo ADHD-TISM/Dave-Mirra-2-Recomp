@@ -106,10 +106,9 @@ static void rpc_dispatch(server_t *s, u32 fn, u32 send_size, u32 recv_size) {
     case 0x80000100: case 0x80000101: {   /* padman: pad.c */
         void pad_rpc(u8 *b); pad_rpc(buf);
         return; }
-    case 0x80000400:     /* mcserv */
-        if (fn == 254) { iopw32(s->buf, 0); iopw32(s->buf + 4, 0x20a); iopw32(s->buf + 8, 0x20e); return; }
-        memset(buf, 0, recv_size ? recv_size : 16);
-        return;
+    case 0x80000400: {   /* mcserv: mc.c, memory card over host files */
+        void mc_rpc(u32 fn, u8 *b); mc_rpc(fn, buf);
+        return; }
     case 0x80000701: {   /* sdrdrv (libsd remote): block-transfer streams go to spu2.c */
         u32 ch = iop32(s->buf + 4) & 1, mode = iop32(s->buf + 8), addr = iop32(s->buf + 12), size = iop32(s->buf + 16);
         if (recv_size && recv_size <= 0x10000) memset(buf, 0, recv_size);   /* same buffer as the args */

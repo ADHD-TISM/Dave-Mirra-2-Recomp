@@ -110,6 +110,7 @@ int main(int argc, char **argv) {
         else if (!strcmp(argv[i], "--log-iop")) { extern int g_log_iop; g_log_iop = 1; }
         else if (!strcmp(argv[i], "--turbo")) g_turbo = 1;
         else if (!strcmp(argv[i], "--no-audio")) g_no_audio = 1;
+        else if (!strcmp(argv[i], "--log-mc")) { extern int g_log_mc; g_log_mc = 1; }
         else if (!strcmp(argv[i], "--log-frames")) { extern int g_log_frames; g_log_frames = 1; }
         else if (!strcmp(argv[i], "--log-spu") && i + 1 < argc) g_log_spu = atoi(argv[++i]);
         else if (!strcmp(argv[i], "--log-pad")) { extern int g_log_pad; g_log_pad = 1; }
