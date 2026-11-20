@@ -330,7 +330,7 @@ to disc\missing_entries.txt. Expect more in screens not visited yet.
 - Underruns: three bursts in the first 1500 frames, at single slow frames
   (movie start / loads at frames ~140, ~388, ~1424), none in steady play.
 
-## Memory card (2026-11-19, eleventh session) — save and load work
+## Memory card (2026-11-19, eleventh session) — save and load work (user: Options save and the save after a complete run both work)
 `runtime/mc.c`: HLE MCSERV (sid 0x80000400) over host files; the game's own
 EE libmc (SCE 2200, old v1 protocol) runs unchanged, MCMAN/MCSERV are not.
 Card 1 = `memcard\mc0\` in the run folder (disc\ for build\bmx2.exe,
