@@ -19,6 +19,7 @@ Python, downloaded), bmx2recomp/ (the project: recompilers and runtime), work/
 bmx2.ini and its log). Updates never touch game/, so your settings are kept.
 """
 import hashlib
+import http.client
 import json
 import os
 import re
@@ -168,26 +169,34 @@ def fetch(url, dest, log, sha256=None, label=None):
                     got += len(b)
                     if total and got * 10 // total != shown:
                         shown = got * 10 // total
-                        log("  %s: %d%% of %.0f MB" % (label, shown * 10, total / 1e6))
+                        log("  %s: %d%% of %.1f MB" % (label, shown * 10, total / 1e6))
             if sha256 and h.hexdigest() != sha256:
                 raise Fail("%s failed its checksum (corrupt or tampered download)" % label)
             os.replace(part, dest)
             return
-        except (urllib.error.URLError, OSError, TimeoutError) as e:
-            last = e
+        except (urllib.error.URLError, OSError, TimeoutError, http.client.HTTPException) as e:
+            last = e   # HTTPException: e.g. IncompleteRead when a chunked archive is cut off
             log("  %s: %s%s" % (label, e, ", retrying" if attempt < 2 else ""))
             time.sleep(2)
     raise Fail("could not download %s: %s. Check your internet connection." % (label, last))
 
 
-def safe_extract(zpath, dest, strip=0, skip=()):
+def safe_extract(zpath, dest, strip=0, skip=(), only=None):
     """Unpack a zip into dest, dropping `strip` leading path parts and refusing
-    any member that would land outside dest."""
+    any member that would land outside dest. only: keep just the members whose
+    path (after dropping strip - 1 parts) starts with this folder, e.g. "bmx2recomp/"."""
     base = os.path.realpath(dest)
     os.makedirs(base, exist_ok=True)
-    with zipfile.ZipFile(zpath) as z:
+    try:
+        z = zipfile.ZipFile(zpath)
+    except zipfile.BadZipFile:
+        raise Fail("the download is damaged; try again")
+    with z:
         for info in z.infolist():
-            parts = [p for p in info.filename.split("/") if p][strip:]
+            all_parts = [p for p in info.filename.split("/") if p]
+            if only is not None and not ("/".join(all_parts[strip - 1:]) + "/").startswith(only):
+                continue
+            parts = all_parts[strip:]
             if not parts:
                 continue
             rel = "/".join(parts)
@@ -204,10 +213,33 @@ def safe_extract(zpath, dest, strip=0, skip=()):
                 shutil.copyfileobj(src, out, 1 << 20)
 
 
+def rename_dir(src, dst):
+    """os.replace for a folder, retried: on Windows a virus scanner holding a
+    just-written file open makes the rename fail for a moment (WinError 5)."""
+    for attempt in range(10):
+        try:
+            os.replace(src, dst)
+            return
+        except PermissionError:
+            if attempt == 9:
+                raise
+            time.sleep(0.5)
+
+
 def replace_dir(tmp, final):
+    """Swap tmp in for final. final is first moved aside whole, so a failure
+    never leaves it half deleted (with its launcher marker gone)."""
+    old = final + ".old"
+    shutil.rmtree(old, ignore_errors=True)
     if os.path.isdir(final):
-        shutil.rmtree(final)
-    os.replace(tmp, final)
+        rename_dir(final, old)
+    try:
+        rename_dir(tmp, final)
+    except OSError:
+        if os.path.isdir(old) and not os.path.exists(final):
+            rename_dir(old, final)     # put the old one back
+        raise
+    shutil.rmtree(old, ignore_errors=True)
 
 
 def run(cmd, log, cwd=None, env=None, tag=""):
@@ -324,6 +356,9 @@ def install_project(P, C, log, force=False):
     if is_working_copy(P):
         log("project: using your own copy in %s (the launcher never replaces it)" % P.project)
         return "local"
+    if os.path.isdir(P.project) and not os.path.isfile(os.path.join(P.project, MARKER)) and os.listdir(P.project):
+        raise Fail("%s exists but is incomplete and was not made by the launcher, so it is not replaced. "
+                   "Move it away, then try again." % P.project)
     if not REPO:
         if project_ok(P):
             log("project is installed; there is no online copy to update from yet")
@@ -336,22 +371,22 @@ def install_project(P, C, log, force=False):
         log("project is up to date (%s)" % have)
         return have
     z = fetch_project_zip(P, tag, log)
-    tmp, unpacked = P.project + ".tmp", P.project + ".unpack"
+    tmp = P.project + ".tmp"
     shutil.rmtree(tmp, ignore_errors=True)
-    shutil.rmtree(unpacked, ignore_errors=True)
-    safe_extract(z, unpacked, strip=1)
-    # the repository holds the project in bmx2recomp/ (next to launcher/); a bare project at the top also works
-    src = os.path.join(unpacked, "bmx2recomp")
-    if not os.path.isdir(src):
-        src = unpacked
-    if not all(os.path.isfile(os.path.join(src, n)) for n in PROJECT_FILES):
-        shutil.rmtree(unpacked, ignore_errors=True)
-        raise Fail("the downloaded project looks wrong (files missing)")
-    os.replace(src, tmp)
-    shutil.rmtree(unpacked, ignore_errors=True)
-    open(os.path.join(tmp, MARKER), "w").close()
-    replace_dir(tmp, P.project)
-    os.remove(z)
+    shutil.rmtree(P.project + ".unpack", ignore_errors=True)   # left by launcher 3 before this fix
+    try:
+        # the repository archive is <repo>-<ref>/bmx2recomp/... next to launcher/: unpack just that folder
+        safe_extract(z, tmp, strip=2, only="bmx2recomp/")
+        if not all(os.path.isfile(os.path.join(tmp, n)) for n in PROJECT_FILES):
+            raise Fail("the downloaded project looks wrong (files missing)")
+        open(os.path.join(tmp, MARKER), "w").close()
+        replace_dir(tmp, P.project)
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+        try:
+            os.remove(z)
+        except OSError:
+            pass
     C.set("tag", tag or "main")
     log("project installed: %s" % (tag or "main"))
     return tag or "main"

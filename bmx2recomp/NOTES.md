@@ -564,8 +564,17 @@ Against the published v0.1.0 (ADHD-TISM/Dave-Mirra-2-Recomp), from empty
 scratch folders with BMX2_CLANG set (the 190 MB compiler download not re-run):
 - Download failed in launcher 2: the archive holds the project in
   bmx2recomp/, the launcher expected it at the top. Fixed in launcher 3
-  (commit c509d96, not pushed yet); launcher 2 copies pick it up through
-  update-launcher once it is on GitHub.
+  (commit c509d96, not pushed yet). Launcher 2 copies get it through
+  update-launcher only once a new tag (v0.1.1+) holding it is published:
+  update-launcher downloads the newest tag, not main. v0.1.0's launcher
+  cannot Download.
+- Peer review follow-ups (same day): the project folder is unpacked straight
+  from <repo>-<ref>/bmx2recomp/ into bmx2recomp.tmp (safe_extract only=),
+  folder renames retry 10 x 0.5 s (WinError 5 from virus scanners),
+  replace_dir moves the old folder aside first (never half-deleted), temp
+  folders and the zip are removed on failure, a damaged zip or a cut-off
+  download is a clear error, and a bmx2recomp folder without the launcher
+  marker that is incomplete is refused instead of replaced.
 - Passed with the fix: download, build (script and packaged exe, the exe
   with its downloaded embedded Python), the built game boots to riding;
   update when current ("up to date"), update from an older tag (re-downloads,
