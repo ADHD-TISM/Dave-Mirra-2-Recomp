@@ -32,6 +32,7 @@ import time
 import urllib.error
 import urllib.request
 import zipfile
+import zlib
 from concurrent.futures import ThreadPoolExecutor
 
 # The project's online home (GitHub "owner/name"). Empty while it is not published:
@@ -187,30 +188,36 @@ def safe_extract(zpath, dest, strip=0, skip=(), only=None):
     path (after dropping strip - 1 parts) starts with this folder, e.g. "bmx2recomp/"."""
     base = os.path.realpath(dest)
     os.makedirs(base, exist_ok=True)
+    if only is not None:
+        assert strip >= 1 and only.endswith("/"), "only= needs strip >= 1 and a folder name ending in /"
     try:
-        z = zipfile.ZipFile(zpath)
-    except zipfile.BadZipFile:
+        with zipfile.ZipFile(zpath) as z:
+            _extract_members(z, base, strip, skip, only)
+    except (zipfile.BadZipFile, zlib.error, EOFError):
         raise Fail("the download is damaged; try again")
-    with z:
-        for info in z.infolist():
-            all_parts = [p for p in info.filename.split("/") if p]
-            if only is not None and not ("/".join(all_parts[strip - 1:]) + "/").startswith(only):
-                continue
-            parts = all_parts[strip:]
-            if not parts:
-                continue
-            rel = "/".join(parts)
-            if any((rel + "/").startswith(s) for s in skip):
-                continue
-            target = os.path.realpath(os.path.join(base, *parts))
-            if target != base and not target.startswith(base + os.sep):
-                raise Fail("unsafe path in archive: %s" % info.filename)
-            if info.is_dir() or info.filename.endswith("/"):
-                os.makedirs(target, exist_ok=True)
-                continue
-            os.makedirs(os.path.dirname(target), exist_ok=True)
-            with z.open(info) as src, open(target, "wb") as out:
-                shutil.copyfileobj(src, out, 1 << 20)
+
+
+def _extract_members(z, base, strip, skip, only):
+    """safe_extract's loop over the archive members."""
+    for info in z.infolist():
+        all_parts = [p for p in info.filename.split("/") if p]
+        if only is not None and not ("/".join(all_parts[strip - 1:]) + "/").startswith(only):
+            continue
+        parts = all_parts[strip:]
+        if not parts:
+            continue
+        rel = "/".join(parts)
+        if any((rel + "/").startswith(s) for s in skip):
+            continue
+        target = os.path.realpath(os.path.join(base, *parts))
+        if target != base and not target.startswith(base + os.sep):
+            raise Fail("unsafe path in archive: %s" % info.filename)
+        if info.is_dir() or info.filename.endswith("/"):
+            os.makedirs(target, exist_ok=True)
+            continue
+        os.makedirs(os.path.dirname(target), exist_ok=True)
+        with z.open(info) as src, open(target, "wb") as out:
+            shutil.copyfileobj(src, out, 1 << 20)
 
 
 def rename_dir(src, dst):
@@ -231,12 +238,17 @@ def replace_dir(tmp, final):
     never leaves it half deleted (with its launcher marker gone)."""
     old = final + ".old"
     shutil.rmtree(old, ignore_errors=True)
+    if os.path.exists(old):
+        raise Fail("%s is left from an earlier update and cannot be deleted (a file in it is open?). "
+                   "Close other programs or delete it, then try again." % old)
+    moved = False
     if os.path.isdir(final):
         rename_dir(final, old)
+        moved = True
     try:
         rename_dir(tmp, final)
     except OSError:
-        if os.path.isdir(old) and not os.path.exists(final):
+        if moved and not os.path.exists(final):
             rename_dir(old, final)     # put the old one back
         raise
     shutil.rmtree(old, ignore_errors=True)
@@ -286,7 +298,7 @@ def latest_tag(log, strict=False):
         req = urllib.request.Request("https://api.github.com/repos/%s/tags?per_page=100" % REPO, headers=UA)
         with urllib.request.urlopen(req, timeout=20) as r:
             tags = [t["name"] for t in json.load(r)]
-    except (urllib.error.URLError, OSError, ValueError, TimeoutError) as e:
+    except (urllib.error.URLError, OSError, ValueError, TimeoutError, http.client.HTTPException) as e:
         if strict:
             raise Fail("could not look up the newest version (%s). Try again in a few minutes." % e)
         log("could not look up the newest version: %s" % e)
@@ -401,11 +413,14 @@ def update_launcher(P, C, log):
     tag = latest_tag(log, strict=True)
     z = fetch_project_zip(P, tag, log)
     try:
-        with zipfile.ZipFile(z) as zf:
-            names = [n for n in zf.namelist() if n.endswith("/launcher/bmx2launcher.py")]
-            if not names:
-                raise Fail("this version of the project has no launcher")
-            new = zf.read(names[0])
+        try:
+            with zipfile.ZipFile(z) as zf:
+                names = [n for n in zf.namelist() if n.endswith("/launcher/bmx2launcher.py")]
+                if not names:
+                    raise Fail("this version of the project has no launcher")
+                new = zf.read(names[0])
+        except (zipfile.BadZipFile, zlib.error, EOFError):
+            raise Fail("the download is damaged; try again")
     finally:
         os.remove(z)
     me = os.path.abspath(__file__)
@@ -640,7 +655,7 @@ def generate(P, C, disc, log):
     finally:
         im.close()
     elf = os.path.join(P.discfiles, GAME_EXE)
-    log("translating the game code (EE, about a minute)")
+    log("translating the game code (EE, a few seconds)")
     run([py, "-I", os.path.join(tools, "recomp_ee.py"), elf, P.gen, "--extra", os.path.join(P.project, "extra_ee.txt")],
         log, cwd=P.project)
     for fname, name, addr in IOP_MODULES:
@@ -723,11 +738,9 @@ def compile_game(P, C, log, progress=None):
         newkeys[tag] = k
         if not (os.path.isfile(o) and keys.get(tag) == k):
             todo.append((tag, p, o))
-    # vu.c holds the recompiled VU1 programs and takes minutes on its own: start it first
+    # vu.c (with the recompiled VU1 programs) is still the largest file: start it first
     todo.sort(key=lambda t: t[1].endswith(os.sep + "vu.c"), reverse=True)
-    log("compiling %d of %d files%s" % (len(todo), len(src), " (the first build takes several minutes)" if len(todo) > 20 else ""))
-    if any(t[1].endswith(os.sep + "vu.c") for t in todo):
-        log("  (vu.c, the VU1 programs, takes about 4 minutes by itself)")
+    log("compiling %d of %d files%s" % (len(todo), len(src), " (the first build takes about a minute)" if len(todo) > 20 else ""))
     done = [0]
     errors = []
     ok_done = {}
@@ -1192,7 +1205,7 @@ def gui(root_dir, notice=None):
     ttk.Label(b, wraplength=680, style="Muted.TLabel",
               text="Checks your game, reads its code from the disc image, translates it to C and builds the game "
                    "into the game folder. Steps that are already up to date are skipped. The first build takes "
-                   "several minutes.").pack(anchor="w")
+                   "about a minute.").pack(anchor="w")
 
     # ---- Update tab
     u = tabs["Update"]
