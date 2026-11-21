@@ -821,6 +821,8 @@ SETTINGS = [
      "1 = the console's speed, 0 = as fast as the PC can go (for testing)"),
     ("gamepad", "Gameplay", "Use an Xbox-style gamepad", "bool", B01, "1",
      "1 = use XInput gamepads (A = cross, B = circle, X = square, Y = triangle) for player 1 and the Player 2 pad setting; 0 = keyboard only"),
+    ("rumble", "Gameplay", "Gamepad vibration", "bool", B01, "1",
+     "1 = the gamepad vibrates when the game asks for it (also needs Vibration: On in the game's Options > Controller)"),
     ("pad2", "Gameplay", "Player 2 pad", "choice", ["gamepad2", "gamepad1", "off"], "gamepad2",
      "Player 2 (Multiplayer): gamepad2 = second gamepad, gamepad1 = first gamepad (player 1 uses the keyboard), off. Needs gamepads on"),
     ("scale", "Video", "Internal resolution", "choice", ["1", "2", "3", "4"], "2",

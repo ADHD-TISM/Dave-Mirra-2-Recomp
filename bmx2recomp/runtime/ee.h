@@ -155,7 +155,13 @@ void ee_event(void);
 
 #ifdef EE_TRACE
 extern u32 ee_trace_buf[1 << 22]; extern u32 ee_trace_pos;
-#define FENTRY(a) (ee_trace_buf[ee_trace_pos++ & 0x3fffff] = (a))
+/* EE_COUNT=addr[,addr...] (up to 8): count entries of those functions, printed at exit */
+extern u32 ee_count_addr[8], ee_count_hits[8]; extern int ee_count_n;
+static inline void ee_fentry(u32 a) {
+    ee_trace_buf[ee_trace_pos++ & 0x3fffff] = a;
+    for (int i = 0; i < ee_count_n; i++) if (ee_count_addr[i] == a) ee_count_hits[i]++;
+}
+#define FENTRY(a) ee_fentry(a)
 #else
 #define FENTRY(a) ((void)0)
 #endif

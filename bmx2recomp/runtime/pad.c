@@ -29,6 +29,7 @@
  */
 #include "rt.h"
 #include "config.h"
+#include "iop.h"
 #include <windows.h>
 #include <stdlib.h>
 
@@ -44,11 +45,19 @@ int g_log_pad;
 static u32 area[2][4];          /* EE address per port/slot, 0 = not open */
 static u32 frame_no[2][4];
 static int pressure_mode[2], analog[2] = { 1, 1 }, mode_lock[2];
+/* vibration: padSetActDirect (EE fn 1d99a8) SIF-DMAs a 32-byte block
+   {counter, 1, 6, data[6]} into one half (counter & 1) of a 64-byte IOP buffer
+   whose address padman returns from open (+20); padSetActAlign (cmd 8) maps
+   data bytes to actuators 0 (small motor, on/off) and 1 (large motor, 0-255). */
+static u32 act_buf[2];                  /* IOP address per port (slot 0), 0 = none */
+static u8 act_align[2][6] = { { 0, 1, 0xff, 0xff, 0xff, 0xff }, { 0, 1, 0xff, 0xff, 0xff, 0xff } };
 
 /* ---- host input ------------------------------------------------------------ */
 typedef struct { WORD buttons; BYTE lt, rt; SHORT lx, ly, rx, ry; } xi_gamepad;
 typedef struct { DWORD packet; xi_gamepad g; } xi_state;
 static DWORD (WINAPI *xi_get)(DWORD, xi_state *);
+typedef struct { WORD left, right; } xi_vibration;     /* left = low-frequency (large) motor */
+static DWORD (WINAPI *xi_set)(DWORD, xi_vibration *);
 static int xi_tried;
 static void xi_load(void);
 
@@ -70,8 +79,45 @@ static void xi_load(void) {
     const char *dlls[] = { "xinput1_4.dll", "xinput1_3.dll", "xinput9_1_0.dll" };
     for (int i = 0; i < 3 && !xi_get; i++) {
         HMODULE m = LoadLibraryA(dlls[i]);
-        if (m) xi_get = (DWORD (WINAPI *)(DWORD, xi_state *))(void *)GetProcAddress(m, "XInputGetState");
+        if (m) {
+            xi_get = (DWORD (WINAPI *)(DWORD, xi_state *))(void *)GetProcAddress(m, "XInputGetState");
+            xi_set = (DWORD (WINAPI *)(DWORD, xi_vibration *))(void *)GetProcAddress(m, "XInputSetState");
+        }
     }
+}
+
+/* the XInput slot that is this player's pad, or -1 */
+static int player_slot(int port) {
+    if (!g_cfg.gamepad) return -1;
+    if (port == 0) return g_cfg.pad2 == 2 ? -1 : 0;
+    return g_cfg.pad2 == 0 ? -1 : g_cfg.pad2 == 2 ? 0 : 1;
+}
+
+static u16 rumble_now[4];               /* last motor values sent per XInput slot: large << 8 | small */
+static void rumble_send(int idx, u16 v) {
+    if (idx < 0 || idx > 3 || rumble_now[idx] == v) return;
+    if (g_log_pad) LOG("pad: rumble slot %d large %u small %u at frame %llu\n", idx, v >> 8, v & 1, (unsigned long long)g_frame);
+    rumble_now[idx] = v;
+    if (!xi_set) return;
+    xi_vibration vib = { (WORD)((v >> 8) * 257), (WORD)((v & 0xff) ? 0xffff : 0) };
+    xi_set((DWORD)idx, &vib);
+}
+static void rumble_stop_all(void) { for (int i = 0; i < 4; i++) if (rumble_now[i]) rumble_send(i, 0); }
+
+/* newest motor values the game DMA'd for a port: large << 8 | small (0 = off) */
+static u16 rumble_read(int port) {
+    u32 a = act_buf[port];
+    if (!a) return 0;
+    u32 c0 = ir32(a), c1 = ir32(a + 32);
+    if (g_log_pad) {
+        static u32 seen[2];
+        if (c0 + c1 != seen[port]) { seen[port] = c0 + c1; LOG("pad: act block for player %d: counters %u %u\n", port + 1, c0, c1); }
+    }
+    u32 half = (s32)(c1 - c0) > 0 ? a + 32 : a;   /* the larger counter is the newer block */
+    u8 d[6]; for (int k = 0; k < 6; k++) d[k] = ir8(half + 12 + k);
+    u8 small = act_align[port][0] < 6 ? d[act_align[port][0]] : 0;
+    u8 large = act_align[port][1] < 6 ? d[act_align[port][1]] : 0;
+    return (u16)(large << 8 | (small ? 1 : 0));
 }
 
 typedef struct { u16 buttons; u8 lx, ly, rx, ry; } pad_in;
@@ -205,6 +251,9 @@ static void write_frame(int port, int slot, const pad_in *in, int plugged) {
     put8(f + 0x6b, 1);
     put8(f + 0x40, 0); put8(f + 0x41, 1); put8(f + 0x42, 0); put8(f + 0x43, 0);
     put8(f + 0x6e, (u8)mode_lock[port]);
+    /* button mask (padInfoPressMode, EE fn 1d9ca0): a DualShock 2 always has the 18
+       pressure-capable buttons; the game's pad setup (fn 112d98 step 70) gives up without */
+    put8(f + 0x79, 0xff); put8(f + 0x7a, 0xff); put8(f + 0x7b, 0x03);
 
     u16 b = (u16)~in->buttons;
     u8 d[32]; memset(d, 0, sizeof d);
@@ -234,29 +283,64 @@ void pad_vsync(void) {
         last[p] = in.buttons; was[p] = plugged;
         for (int s = 0; s < 4; s++) write_frame(p, s, &in, plugged);
     }
+    {   /* vibration (bmx2.ini rumble = 0 turns it off) */
+        static int hooked;
+        if (!hooked) { hooked = 1; atexit(rumble_stop_all); }
+        u16 v[4] = { 0, 0, 0, 0 };
+        for (int p = 0; p < 2; p++) {
+            int idx = player_slot(p);
+            if (idx >= 0 && g_cfg.rumble && was[p] == 1) v[idx] |= rumble_read(p);
+        }
+        for (int i = 0; i < 2; i++) rumble_send(i, v[i]);
+    }
 }
 
-/* padman RPC: buf is the 128-byte request/reply in IOP RAM. Reply value at +12. */
+/* padman RPC: buf is the 128-byte request/reply in IOP RAM (sif.c server buffer).
+ * Command numbers and reply offsets as the game's libpad sends and reads them
+ * (fn 1d9008 open, 1d98f0 setMainMode, 1d9a60 setActAlign, 1d9bf0 setButtonInfo,
+ * 1d9e80 getPortMax, 1d9ee8 getSlotMax, 1d91f0 close, 1d9f50 version):
+ *   1 open(port, slot, -, area)   +12 result, +20 IOP address of the 64-byte act buffer
+ *   6 setMainMode(mode, lock), 8 setActAlign(data[6] at +12): result at +20;
+ *   10 setButtonInfo(mask): result at +16 (1 = accepted; the game then waits on the
+ *       frame's reqState)
+ *   12 getPortMax, 13 getSlotMax(port), 14 close, 16 init, 18 version: result at +12
+ * The button mask (padInfoPressMode) is read from the frame (+0x79), not by RPC. */
 void pad_rpc(u8 *buf) {
     u32 w[8]; memcpy(w, buf, 32);
-    u32 cmd = w[0], port = w[1] & 1, slot = w[2] & 3, ret = 1;
+    u32 cmd = w[0], port = w[1] & 1, slot = w[2] & 3, ret = 1, ret20 = 1;
+    u32 iop = (u32)(buf - iop_ram);
     switch (cmd) {
-    case 0x01: area[port][slot] = w[4]; frame_no[port][slot] = 0; break;   /* open(port, slot, -, area) */
-    case 0x05:                                                           /* setMainMode(port, slot, mode, lock) */
+    case 1:                                                              /* open */
+        area[port][slot] = w[4]; frame_no[port][slot] = 0;
+        if (slot == 0) {
+            act_buf[port] = iop + 0x800 + 64 * port;                     /* free space in the server buffer */
+            for (u32 k = 0; k < 64; k += 4) iw32(act_buf[port] + k, 0);
+            ret20 = act_buf[port];
+        } else ret20 = 0;
+        break;
+    case 6:                                                              /* setMainMode(port, slot, mode, lock) */
         if (slot == 0) { analog[port] = w[3] != 0; mode_lock[port] = w[4] == 3; if (!analog[port]) pressure_mode[port] = 0; }
+        else ret20 = 0;
         break;
-    case 0x08: ret = slot == 0 && pressure_mode[port] ? 0x3ffff : 0; break; /* getButtonMask */
-    case 0x09:                                                           /* setButtonInfo */
-        if (slot == 0) pressure_mode[port] = (w[3] & 0x3ffff) != 0;
-        else ret = 0;
+    case 8:                                                              /* setActAlign(port, slot, data[6]) */
+        if (slot == 0) memcpy(act_align[port], buf + 12, 6); else ret20 = 0;
         break;
-    case 0x0b: ret = 2; break;                                           /* getPortMax */
-    case 0x0c: ret = 1; break;                                           /* getSlotMax */
-    case 0x0d: area[port][slot] = 0; break;                              /* close */
-    case 0x10: ret = 1; break;                                           /* init */
-    case 0x12: memset(buf, 0, 128); ret = 0x400; break;                  /* module version */
-    default: break;                                                      /* act dir/align, vref, end */
+    case 10:                                                             /* setButtonInfo(port, slot, mask) */
+        if (slot == 0) pressure_mode[port] = (w[3] & 0x3ffff) != 0; else ret20 = 0;
+        break;
+    case 12: ret = 2; break;                                             /* getPortMax */
+    case 13: ret = 1; break;                                             /* getSlotMax */
+    case 14:                                                             /* close */
+        area[port][slot] = 0;
+        if (slot == 0) act_buf[port] = 0;
+        break;
+    case 16: ret = 1; break;                                             /* init */
+    case 18: memset(buf, 0, 128); ret = 0x400; break;                    /* module version */
+    default: break;                                                      /* 11 vref, 20 end */
     }
-    if (g_log_pad || cmd != 0x06) LOG("pad: cmd %#x port %u slot %u args %08x %08x -> %#x\n", cmd, port, slot, w[3], w[4], ret);
+    if (g_log_pad || (cmd != 6 && cmd != 8 && cmd != 10))
+        LOG("pad: cmd %u port %u slot %u args %08x %08x -> %#x / %#x\n", cmd, port, slot, w[3], w[4], ret, ret20);
     memcpy(buf + 12, &ret, 4);
+    if (cmd == 1 || cmd == 6 || cmd == 8) memcpy(buf + 20, &ret20, 4);
+    if (cmd == 10) memcpy(buf + 16, &ret20, 4);
 }

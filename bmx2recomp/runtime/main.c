@@ -98,7 +98,15 @@ static void watch_setup(void) {}
 
 #ifdef EE_TRACE
 u32 ee_trace_buf[1 << 22]; u32 ee_trace_pos;
+u32 ee_count_addr[8], ee_count_hits[8]; int ee_count_n;
+static void count_init(void) __attribute__((constructor));
+static void count_init(void) {
+    const char *e = getenv("EE_COUNT");
+    while (e && *e && ee_count_n < 8) { char *x; ee_count_addr[ee_count_n++] = (u32)strtoul(e, &x, 16); e = *x == ',' ? x + 1 : x; if (x == e && *e) break; }
+}
 static void trace_dump(void) {
+    for (int i = 0; i < ee_count_n; i++) LOG("count: fn %08x entered %u times\n", ee_count_addr[i], ee_count_hits[i]);
+    if (getenv("EE_COUNT")) return;     /* counting only: skip the 4M-line trace file */
     FILE *f = fopen("trace.txt", "w");
     if (!f) return;
     u32 n = ee_trace_pos < (1u << 22) ? ee_trace_pos : (1u << 22);

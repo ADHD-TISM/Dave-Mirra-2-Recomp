@@ -643,6 +643,32 @@ and rode (attempt screens, tricks, name entry, Exit menus); no missing code,
 screenshots do not show which player is riding. Repeated identical shots are
 the crash pose before a respawn, not a hang.
 
+## Pad protocol fix + vibration (2026-11-21)
+The game's libpad uses older padman command numbers than pad.c assumed
+(found from fn 1d9008.., all at the 0x2fc180 request buffer):
+1 open (+12 result, +20 IOP address of a 64-byte act buffer), 6 setMainMode
+and 8 setActAlign (result +20), 10 setButtonInfo (result +16), 12 portMax,
+13 slotMax, 14 close, 16 init, 18 version (+12). The button mask is read from
+the pad frame (+0x79..), not by RPC. pad.c used 5/8/9/0x0b.. so the game's pad
+setup (fn 112d98, per-pad records of 68 bytes at 0x260380, step at +17) gave
+up at step 70 (no pressure buttons) before setActAlign; it now reaches step
+99 (ready) with DualShock (+19), pressure mode (+18) and act align 00 01 ff...
+Pressure-sensitive buttons are therefore on now (id 0x79); riding is
+unchanged in the test route.
+Vibration: padSetActDirect (fn 1d99a8) SIF-DMAs {counter, 1, 6, data[6]}
+into half (counter & 1) of the act buffer; pad.c reads the newest half each
+vblank, maps it with the game's align (actuator 0 small on/off, 1 large
+0-255) and calls XInputSetState (left = large * 257, right = small ? max : 0)
+on that player's pad, only on change; all motors stop at exit. bmx2.ini
+rumble = 0 turns it off (launcher Gameplay tab). Not verified with a real
+pad: in scripted crawls the game never asked for vibration. Its vibrate
+entry fn 16bb80(player, motor, strength) is reached only from 3 places
+(19d700, 19ea48 surface effects, 1af550) and none fired in Best Run riding;
+fn 16bb80 checks the Vibration option bit (0x21c41c + 17 * player) and a
+global block flag (gp-3568 = 0x25ba80).
+Debug aid: EE_TRACE builds take EE_COUNT=addr[,addr..] (up to 8) and print
+how often those functions were entered (direct calls only, not tail jumps).
+
 ## Next step (recommended, 2026-11-21)
 1. Playtest further; add missing code from any message box. Every level now
    loads and rides in scripted crawls (see "Levels and cheats").
