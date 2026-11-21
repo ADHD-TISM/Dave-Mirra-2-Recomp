@@ -18,7 +18,20 @@ void prof_here(void) {
     main_thread = h;
 }
 static volatile int running;
-static u64 from_frame, base;
+static u64 from_frame, base, image_end;
+/* samples outside bmx2.exe also count the first return address into bmx2.exe
+   found on the stack, written to <PROF>.callers (resolve it with prof.py too) */
+#define NC (1 << 16)
+static u64 ckeys[NC];
+static u32 ccounts[NC];
+static void cadd(u64 rip) {
+    u64 h = (rip * 0x9e3779b97f4a7c15ull) >> 48;
+    for (int i = 0; i < NC; i++, h++) {
+        h &= NC - 1;
+        if (ckeys[h] == rip) { ccounts[h]++; return; }
+        if (!ckeys[h]) { ckeys[h] = rip; ccounts[h] = 1; return; }
+    }
+}
 static u64 total;
 static const char *out;
 
@@ -40,7 +53,18 @@ static DWORD WINAPI sampler(void *p) {
         if (g_frame < from_frame) continue;
         if (SuspendThread(main_thread) == (DWORD)-1) continue;
         CONTEXT c; c.ContextFlags = CONTEXT_CONTROL;
-        if (GetThreadContext(main_thread, &c)) { add(c.Rip); total++; }
+        if (GetThreadContext(main_thread, &c)) {
+            add(c.Rip); total++;
+            if (c.Rip < base || c.Rip >= image_end) {
+                const u64 *sp = (const u64 *)c.Rsp;
+                MEMORY_BASIC_INFORMATION mi;
+                if (VirtualQuery(sp, &mi, sizeof mi)) {
+                    const u64 *end = (const u64 *)((u8 *)mi.BaseAddress + mi.RegionSize);
+                    for (int i = 0; i < 512 && sp + i < end; i++)
+                        if (sp[i] > base + 0x1000 && sp[i] < image_end) { cadd(sp[i]); break; }
+                }
+            }
+        }
         ResumeThread(main_thread);
     }
     return 0;
@@ -62,6 +86,11 @@ static void prof_dump(void) {
         fprintf(f, "%llx %u %s+%llx\n", (unsigned long long)(keys[i] - base), counts[i], b, (unsigned long long)(keys[i] - (u64)m));
     }
     fclose(f);
+    char cn[MAX_PATH]; snprintf(cn, sizeof cn, "%s.callers", out);
+    if ((f = fopen(cn, "w"))) {
+        for (u32 i = 0; i < NC; i++) if (ckeys[i]) fprintf(f, "%llx %u\n", (unsigned long long)(ckeys[i] - base), ccounts[i]);
+        fclose(f);
+    }
     LOG("prof: %llu samples written to %s\n", (unsigned long long)total, out);
 }
 
@@ -70,6 +99,9 @@ void prof_init(void) {
     if (!out) return;
     if (getenv("PROF_FROM")) from_frame = strtoull(getenv("PROF_FROM"), 0, 10);
     base = (u64)GetModuleHandleA(NULL);
+    {   const IMAGE_DOS_HEADER *d = (const IMAGE_DOS_HEADER *)base;
+        const IMAGE_NT_HEADERS *nt = (const IMAGE_NT_HEADERS *)(base + d->e_lfanew);
+        image_end = base + nt->OptionalHeader.SizeOfImage; }
     DuplicateHandle(GetCurrentProcess(), GetCurrentThread(), GetCurrentProcess(), &main_thread, 0, FALSE, DUPLICATE_SAME_ACCESS);
     running = 1;
     atexit(prof_dump);

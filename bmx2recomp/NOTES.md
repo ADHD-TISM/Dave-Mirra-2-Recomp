@@ -507,8 +507,22 @@ mode. Checked on the intro movie: the letterbox edge row alternated
 (Sleep-based, swap interval 0) was not measured and may add judder on
 high-refresh monitors.
 
+## Load hitches (fixed 2026-11-21)
+- The 300-590 ms frames at level loads (frames 5162-5170 of the test route)
+  came only from `--log-sys 1`: thousands of sif/rpc log lines per frame
+  while ZCDDVD reads the level. Without it the load has no long frame and no
+  underrun. Do not judge frame times or audio with --log-sys on.
+- The 3 frames of ~170-195 ms at each movie start (141, 389, 1063) were fiber
+  switches: the game polls the IPU while the decoder fiber waits for input,
+  and every poll switched into the fiber and back. ipu.c run() now resumes a
+  stalled fiber only when in_fill/out_drain made progress: 196 -> 15 ms, IPU
+  command counts identical.
+- cd_read reads up to 64 sectors per fread and skips seeks on sequential reads.
+- Full real-time route (9400 frames): worst frame 18.1 ms, 0 underruns, 0
+  present gaps.
+- Profiler: samples outside bmx2.exe also record the first return address
+  into bmx2.exe on the stack, in <PROF>.callers (resolve with tools/prof.py).
+
 ## Next step (recommended, 2026-11-21)
 1. Playtest further; add missing code from any message box. Every level now
    loads and rides in scripted crawls (see "Levels and cheats").
-2. Single long frames at loads (300-560 ms) still cause audio gaps and a
-   frame hitch; the loads themselves are the cost (not looked at).

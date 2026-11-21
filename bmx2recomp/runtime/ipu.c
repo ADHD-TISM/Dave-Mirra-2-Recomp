@@ -35,6 +35,7 @@ static struct {
     u32 ctrl;                    /* IPU_CTRL bits 14-26 (ECD SCD IDP AS IVF QST MP1 PCT), CBP */
     u32 cmd, data;               /* current command word, IPU_CMD.DATA */
     int busy, abort;
+    int wait_in, wait_qw, wait_out;   /* fiber stalled on input (in_qw at the stall) / on a full output FIFO */
     u8  iqm[2][64];              /* quantiser matrices in raster order: [0] intra, [1] non-intra */
     u16 vqclut[16];
     u32 th0, th1;
@@ -257,7 +258,7 @@ static void need_bits(int n) {
     while (ipu.in_qw * 128 - ipu.bp < n) {
         int before = ipu.in_qw;
         in_fill();
-        if (ipu.in_qw == before) yield();
+        if (ipu.in_qw == before) { ipu.wait_in = 1; ipu.wait_qw = ipu.in_qw; yield(); ipu.wait_in = 0; }
     }
 }
 static u32 peek(int n) {          /* n <= 32 */
@@ -307,7 +308,7 @@ static void out_qw(const void *p) {
     for (;;) {
         out_drain();
         if (ipu.out_qw < OUT_MAX) break;
-        yield();
+        ipu.wait_out = 1; yield(); ipu.wait_out = 0;
     }
     memcpy(ipu.out[(ipu.out_head + ipu.out_qw) % OUT_MAX], p, 16);
     ipu.out_qw++;
@@ -642,6 +643,12 @@ static void WINAPI ipu_main(void *p) {
 /* Resume a running command until it finishes or stalls, then deliver interrupts. */
 static void run(void) {
     if (in_fiber) return;
+    if (ipu.busy && ipu_fiber && (ipu.wait_in || ipu.wait_out)) {
+        /* the decoder is stalled: switch to its fiber only when that can make
+           progress (a fiber switch per IPU poll cost ~170 ms at movie starts) */
+        in_fill(); out_drain();
+        if (ipu.wait_in ? ipu.in_qw == ipu.wait_qw : ipu.out_qw >= OUT_MAX) goto irqs;
+    }
     if (ipu.busy) {
         if (!ipu_fiber) ipu_fiber = CreateFiberEx(64 << 10, 1 << 20, FIBER_FLAG_FLOAT_SWITCH, ipu_main, 0);
         in_fiber = 1;
@@ -652,6 +659,7 @@ static void run(void) {
         in_fill();
         out_drain();
     }
+irqs:;
     u32 irq = ipu.irq; ipu.irq = 0;
     if (irq & (1u << 3)) dmac_raise(3);
     if (irq & (1u << 4)) dmac_raise(4);
@@ -660,7 +668,7 @@ static void run(void) {
 
 static void reset(void) {
     if (ipu_fiber) { DeleteFiber(ipu_fiber); ipu_fiber = 0; }
-    ipu.busy = 0; ipu.in_qw = 0; ipu.bp = 0; ipu.out_qw = 0; ipu.out_head = 0;
+    ipu.busy = 0; ipu.wait_in = ipu.wait_out = 0; ipu.in_qw = 0; ipu.bp = 0; ipu.out_qw = 0; ipu.out_head = 0;
     ipu.ctrl = 0; ipu.data = 0;
 }
 

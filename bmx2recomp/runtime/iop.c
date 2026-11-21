@@ -221,12 +221,24 @@ static int cd_read(u32 lsn, u32 count, u32 dst) {
         long long n = _ftelli64(disc_image);
         iso = n % 2352 != 0 && n % 2048 == 0;
     }
-    u8 sec[2352];
+    /* one seek + read per 64 sectors (was one per sector, ~170 ms at movie starts) */
+    static u8 buf[64 * 2352];
+    static long long pos = -1;                  /* file position after the last read, to skip seeks */
     int ss = iso ? 2048 : 2352, off = iso ? 0 : 24;
-    for (u32 k = 0; k < count; k++) {
-        _fseeki64(disc_image, (long long)(lsn + k) * ss, SEEK_SET);
-        if (fread(sec, 1, ss, disc_image) != (size_t)ss) memset(sec, 0, sizeof sec);
-        for (u32 o = 0; o < 2048; o++) iw8(dst + k * 2048 + o, sec[off + o]);
+    for (u32 k = 0; k < count; ) {
+        u32 n = count - k < 64 ? count - k : 64;
+        long long at = (long long)(lsn + k) * ss;
+        if (at != pos) _fseeki64(disc_image, at, SEEK_SET);
+        size_t got = fread(buf, ss, n, disc_image);
+        pos = got == n ? at + (long long)n * ss : -1;
+        if (got < n) memset(buf + got * ss, 0, (size_t)(n - got) * ss);
+        for (u32 j = 0; j < n; j++, k++) {
+            u32 d = dst + k * 2048;
+            const u8 *s = buf + j * ss + off;
+            if (iop_is_ram(d) && iop_is_ram(d + 2047) && (d & 0x1fffff) + 2048 <= sizeof iop_ram)
+                memcpy(iop_ram + (d & 0x1fffff), s, 2048);
+            else for (u32 o = 0; o < 2048; o++) iw8(d + o, s[o]);
+        }
     }
     return 1;
 }
