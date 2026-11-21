@@ -36,7 +36,7 @@ from concurrent.futures import ThreadPoolExecutor
 # The project's online home (GitHub "owner/name"). Empty while it is not published:
 # the launcher then uses the bmx2recomp folder next to it and Update says so.
 REPO = "ADHD-TISM/Dave-Mirra-2-Recomp"
-LAUNCHER_VERSION = "2"
+LAUNCHER_VERSION = "3"
 
 GAME_NAME = "Dave Mirra Freestyle BMX 2"
 GAME_SERIAL = "SLUS-20159"
@@ -336,12 +336,19 @@ def install_project(P, C, log, force=False):
         log("project is up to date (%s)" % have)
         return have
     z = fetch_project_zip(P, tag, log)
-    tmp = P.project + ".tmp"
+    tmp, unpacked = P.project + ".tmp", P.project + ".unpack"
     shutil.rmtree(tmp, ignore_errors=True)
-    safe_extract(z, tmp, strip=1)
-    if not all(os.path.isfile(os.path.join(tmp, n)) for n in PROJECT_FILES):
-        shutil.rmtree(tmp, ignore_errors=True)
+    shutil.rmtree(unpacked, ignore_errors=True)
+    safe_extract(z, unpacked, strip=1)
+    # the repository holds the project in bmx2recomp/ (next to launcher/); a bare project at the top also works
+    src = os.path.join(unpacked, "bmx2recomp")
+    if not os.path.isdir(src):
+        src = unpacked
+    if not all(os.path.isfile(os.path.join(src, n)) for n in PROJECT_FILES):
+        shutil.rmtree(unpacked, ignore_errors=True)
         raise Fail("the downloaded project looks wrong (files missing)")
+    os.replace(src, tmp)
+    shutil.rmtree(unpacked, ignore_errors=True)
     open(os.path.join(tmp, MARKER), "w").close()
     replace_dir(tmp, P.project)
     os.remove(z)
