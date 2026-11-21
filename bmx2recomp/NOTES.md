@@ -631,7 +631,17 @@ Crawl (turbo, PAD_SCRIPT + PAD2_SCRIPT, 32000 frames): Multiplayer -> rider,
 bike, modifier setup for both players, Select Game (Best Run 2 min), player
 1 rides, New Record name entry (from A: Up, Left, Down = END, X), player 2
 ready, rides and lands tricks on its own input, Time Up, View Replay/Exit.
-No missing code. The other multiplayer games in Select Game were not tried.
+No missing code.
+All Select Game games crawled 2026-11-21 (turbo, 30000 frames each, both
+players scripted; menu X presses must stop at frame 4600 or the last one
+picks Best Run; the list has 14 entries and wraps): Best Run - 3 min, High
+Five, B-M-X, Random Spot, Wipeout, Longest Grind, Highest Walltap, Big Air
+Contest, Huge Combo Contest, Super Spin Contest, Furthest Jump, Longest
+Manual, Longest Nose Wheelie and the 14th entry. Every one entered its game
+and rode (attempt screens, tricks, name entry, Exit menus); no missing code,
+0 VU1 mismatches. Player 2's own turn was seen in Best Run; in the others the
+screenshots do not show which player is riding. Repeated identical shots are
+the crash pose before a respawn, not a hang.
 
 ## Next step (recommended, 2026-11-21)
 1. Playtest further; add missing code from any message box. Every level now
