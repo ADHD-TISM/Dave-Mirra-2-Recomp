@@ -721,5 +721,19 @@ keeps the frame of the newest IPU command; while a boot movie is open and the
 IPU decoded within 10 frames, pad.c pulses player 1's Start (4 frames down, 4
 up). Intro mode ends when another movie opens or 30 frames after INTRO.PSS
 stops decoding, so Cool Stuff movies and the menus get no presses. Main menu
-at frame ~600 instead of ~2000+. Failing the .PSS open (--no-movies) is still
+at frame ~600 instead of ~2000+. Only decodes after the movie's open count
+(v0.1.3 review): the previous movie's last decode can no longer end intro
+mode before INTRO.PSS shows its first picture. Failing the .PSS open (--no-movies) is still
 not a skip: the game then calls a null method.
+
+## v0.1.3 review follow-ups (2026-11-21)
+- Vibration: a value is remembered only when XInputSetState succeeds; a
+  failed send retries once a second, and a slot whose reads miss 3 times is
+  marked unsent, so a replugged pad gets the game's current motor value.
+- build.sh also rebuilds objects older than runtime/config.h (adding a
+  bmx2_cfg field used to leave gs_gl.o/main.o with old offsets in dev builds;
+  the launcher's build already hashes every header).
+- iop.c: one ZCDDVD open check feeds skip_intro and --no-movies.
+- Multiplayer re-crawled after the pad protocol change (all 14 games, both
+  players scripted, player 2 pad opened on port 1): every game rides, name
+  entry and result menus show, exit 0, no missing code, 0 VU1 mismatches.

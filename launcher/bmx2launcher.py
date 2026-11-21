@@ -831,7 +831,7 @@ SETTINGS = [
      "Internal 3D resolution: 1 = original PS2, 2-4 = sharper, with smoother edges (supersampled with the smooth filter; more GPU work)"),
     ("window_size", "Video", "Window size", "combo", ["auto", "640x480", "960x720", "1280x960", "1600x1200",
                                                       "1280x720", "1920x1080"], "auto",
-     "Window size in pixels (WxH). auto = 1280x960, made smaller if the screen is"),
+     "Window size in pixels (WxH). auto = 1280x960 (1280x720 with widescreen), made smaller if the screen is"),
     ("vsync", "Video", "Vertical sync", "bool", B01, "1",
      "1 = show frames in step with a 60 or 120 Hz screen (smoother); 0 = timer only"),
     ("fullscreen", "Video", "Start in fullscreen", "bool", B01, "0",

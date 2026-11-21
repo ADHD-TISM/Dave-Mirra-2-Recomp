@@ -63,6 +63,7 @@ static void xi_load(void);
 
 /* XInputGetState on an empty slot is slow (it looks for the device each call):
    a slot that was empty is tried again only once a second */
+static u16 rumble_now[4];               /* last motor values sent per XInput slot: large << 8 | small */
 static int xi_read(DWORD idx, xi_state *x) {
     static u64 retry_at[4]; static int misses[4];
     if (!xi_tried) xi_load();
@@ -70,7 +71,7 @@ static int xi_read(DWORD idx, xi_state *x) {
     if (xi_get(idx, x) == 0) { misses[idx] = 0; return 1; }
     /* a connected pad that misses one read (a wireless blip) is retried next frame;
        only after 3 misses in a row is the slot treated as empty */
-    if (++misses[idx] >= 3) retry_at[idx] = g_frame + 60;
+    if (++misses[idx] >= 3) { retry_at[idx] = g_frame + 60; rumble_now[idx] = 0; }   /* resend vibration on replug */
     return 0;
 }
 
@@ -93,14 +94,16 @@ static int player_slot(int port) {
     return g_cfg.pad2 == 0 ? -1 : g_cfg.pad2 == 2 ? 0 : 1;
 }
 
-static u16 rumble_now[4];               /* last motor values sent per XInput slot: large << 8 | small */
+static u64 rumble_retry[4];             /* a send failed (no pad): next try at this frame */
 static void rumble_send(int idx, u16 v) {
-    if (idx < 0 || idx > 3 || rumble_now[idx] == v) return;
+    if (idx < 0 || idx > 3 || rumble_now[idx] == v || g_frame < rumble_retry[idx]) return;
     if (g_log_pad) LOG("pad: rumble slot %d large %u small %u at frame %llu\n", idx, v >> 8, v & 1, (unsigned long long)g_frame);
-    rumble_now[idx] = v;
-    if (!xi_set) return;
+    if (!xi_set) { rumble_now[idx] = v; return; }
     xi_vibration vib = { (WORD)((v >> 8) * 257), (WORD)((v & 0xff) ? 0xffff : 0) };
-    xi_set((DWORD)idx, &vib);
+    /* only a delivered value is remembered: a pad plugged in again gets the
+       current value on the next try (once a second while the slot is empty) */
+    if (xi_set((DWORD)idx, &vib) == 0) rumble_now[idx] = v;
+    else { rumble_now[idx] = 0; rumble_retry[idx] = g_frame + 60; }
 }
 static void rumble_stop_all(void) { for (int i = 0; i < 4; i++) if (rumble_now[i]) rumble_send(i, 0); }
 
@@ -166,29 +169,33 @@ static u8 axis(SHORT v, int flip) {
 
 static void gamepad_in(pad_in *p, const xi_state *x);
 
-/* one player's input; returns whether that player's pad is plugged in */
 /* skip_intro: the boot movies end when Start is pressed, so while one of them
-   plays (its .PSS was opened by name and the IPU decoded within 10 frames)
+   plays (its .PSS was opened by name and the IPU decoded it within 10 frames)
    player 1's Start is pulsed, 4 frames down, 4 up. Any other movie (Cool Stuff,
-   rider bios) ends intro mode, as does INTRO.PSS, the last boot movie, ending. */
+   rider bios) ends intro mode, as does INTRO.PSS, the last boot movie, ending:
+   30 frames with no decode after it decoded at least once. Only decodes since
+   the open count, so the previous movie's last decode cannot end it early. */
 static int intro_movie = -1;   /* -1 boot, 1 intro movie open, 0 intro over */
 static int intro_last;         /* the open movie is INTRO.PSS */
+static u64 intro_opened;       /* frame the open movie was opened */
 void pad_movie_opened(const char *nm) {
     if (g_log_pad) LOG("pad: movie %s opened at frame %llu\n", nm, (unsigned long long)g_frame);
     if (intro_movie == 0) return;
     const char *b = strrchr(nm, '\\'); b = b ? b + 1 : nm;
     if (!_strnicmp(b, "ACCLAIM.PSS", 11) || !_strnicmp(b, "ZINTRO.PSS", 10) || !_strnicmp(b, "INTRO.PSS", 9)) {
-        intro_movie = 1; intro_last = !_strnicmp(b, "INTRO.PSS", 9);
+        intro_movie = 1; intro_last = !_strnicmp(b, "INTRO.PSS", 9); intro_opened = g_frame;
     } else intro_movie = 0;
 }
 static int intro_press(void) {
     extern u64 g_ipu_last_frame;
     if (intro_movie != 1) return 0;
-    int playing = g_ipu_last_frame && g_frame - g_ipu_last_frame < 10;
-    if (!playing) { if (intro_last && g_frame - g_ipu_last_frame > 30) intro_movie = 0; return 0; }
-    return g_cfg.skip_intro && (g_frame & 4);
+    int decoded = g_ipu_last_frame >= intro_opened;            /* this movie has decoded a picture */
+    if (decoded && g_frame - g_ipu_last_frame < 10) return g_cfg.skip_intro && (g_frame & 4);
+    if (decoded && intro_last && g_frame - g_ipu_last_frame > 30) intro_movie = 0;
+    return 0;
 }
 
+/* one player's input; returns whether that player's pad is plugged in */
 static int read_host(int port, pad_in *p) {
     p->buttons = 0; p->lx = p->ly = p->rx = p->ry = 0x80;
     if (nscripts[port] < 0) script_load(port);
@@ -313,7 +320,7 @@ void pad_vsync(void) {
             const char *e = getenv("PAD_RUMBLE_TEST");   /* debug: frame to call the game's vibrate fn */
             if (e) test_at = strtoull(e, 0, 10);
         }
-        if (test_at && g_frame == test_at) {   /* fn 16bb80(player 0, large motor, 255) */
+        if (test_at && g_frame == test_at) {   /* fn 16bb80(player 0, large motor, 255); debug only: safe because 16bb80 makes no blocking syscall */
             ee_state save = ee;
             GD(4) = 0; GD(5) = 1; GD(6) = 255; GD(29) -= 0x1000;
             LOG("pad: rumble test call at frame %llu\n", (unsigned long long)g_frame);
