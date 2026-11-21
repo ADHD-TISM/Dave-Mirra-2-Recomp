@@ -557,7 +557,12 @@ GetInfo reports 8000 clusters less each file's 1 KB clusters and each
 directory's entry clusters (2 entries of 512 bytes per cluster, with . and ..),
 e.g. the game's save folder (4 files, 60 KB) leaves 7936. SetFileInfo flags 1/2
 now set the host file's creation/modification time from the table entry;
-attributes (4) are still not kept. A save with SetFileInfo was not re-run.
+attributes (4) are not kept. Checked 2026-11-21 with a scripted save
+(Options -> Save Game -> slot 1) on an empty card, then a boot with that
+save: the game only calls GetInfo, Open, Close, Read, Write and GetDir (fns
+1 2 3 5 6 13). It never calls SetFileInfo, Delete or ChDir, so attributes and
+file dates do not matter for this game; free space after the save is 7936
+as computed.
 
 ## Launcher Download/Update test (2026-11-21)
 Against the published v0.1.0 (ADHD-TISM/Dave-Mirra-2-Recomp), from empty
