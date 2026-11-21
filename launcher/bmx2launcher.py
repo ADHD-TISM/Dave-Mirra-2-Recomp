@@ -1167,7 +1167,7 @@ def gui(root_dir, notice=None):
     ttk.Label(p, style="Muted.TLabel", wraplength=680,
               text="Keyboard: arrows = d-pad, W A S D = left stick, K / space = cross, L = circle, J = square, "
                    "I = triangle, Q / E = L1 / R1, 1 / 3 = L2 / R2, Enter = start. An Xbox-style gamepad works too. "
-                   "F11 or Alt+Enter = fullscreen. The game has no sound yet.").pack(anchor="w", pady=(10, 0))
+                   "F11 or Alt+Enter = fullscreen.").pack(anchor="w", pady=(10, 0))
     upd_note = ttk.Label(p, text="", style="Warn.TLabel")
     upd_note.pack(anchor="w", pady=8)
 
