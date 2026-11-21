@@ -374,6 +374,11 @@ random riding or menu presses), run from separate folders: no missing code.
 - Session: riding, pause menu.
 - Options: controller setup, Save Game ("SAVE COMPLETE"), overwrite prompt.
 - Cool Stuff: level records, movie list (a movie plays), Load Replay slots.
+- ProQuest on the other 7 levels (cheat 7 first, ProQuest = 5x Up from
+  Cool Stuff, X x4, k x Right on level select): Trainyards, Swamp Trails,
+  Commercial District, Galloon Water Park, Hwy 47 Cloverleaf, Devil's Peak
+  and the 8th level all load and ride; a pro challenge screen (Rick
+  Moliterno) appears. No missing code.
 The only odd log line in every run: "unhandled syscall 0x6b" once at boot
 (pc 001de374), harmless so far.
 
