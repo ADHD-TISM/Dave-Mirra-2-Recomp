@@ -105,21 +105,32 @@ def test_replace_dir_rolls_back_when_the_swap_fails(d):
 
 
 def test_replace_dir_no_restore_without_a_move(d):
+    # no final to move aside: the only rename is the swap, and when it fails nothing is "restored"
     final, tmp = os.path.join(d, "final"), os.path.join(d, "tmp")
     os.makedirs(tmp)
-    real = bl.rename_dir
-    bl.rename_dir = lambda src, dst: (_ for _ in ()).throw(PermissionError("simulated"))
+    real, calls = bl.rename_dir, []
+    def failing(src, dst):
+        calls.append((src, dst))
+        if src == tmp:
+            raise PermissionError("simulated: tmp is locked")
+        real(src, dst)
+    bl.rename_dir = failing
     try:
-        try:
-            bl.replace_dir(tmp, final)
-        except PermissionError:
-            pass
+        bl.replace_dir(tmp, final)
+    except PermissionError:
+        pass
+    else:
+        raise AssertionError("the simulated failure did not surface")
     finally:
         bl.rename_dir = real
+    check(calls == [(tmp, final)], "unexpected renames: %r" % calls)
     check(not os.path.exists(final), "a folder appeared although none was moved aside")
 
 
 def test_replace_dir_refuses_a_stuck_old_folder(d):
+    if os.name != "nt":
+        print("skip %s (needs Windows: an open file blocks deleting its folder)" % "test_replace_dir_refuses_a_stuck_old_folder")
+        return
     final, tmp = os.path.join(d, "final"), os.path.join(d, "tmp")
     os.makedirs(final); open(os.path.join(final, "keep.txt"), "w").close()
     os.makedirs(tmp)
@@ -148,6 +159,18 @@ def test_only_needs_strip_and_slash(d):
         except ValueError:
             continue
         raise AssertionError("no ValueError for %r" % kw)
+
+
+def test_bad_offsets_are_a_clear_error(d):
+    # central directory intact but pointing past moved data: zipfile seeks to a negative offset (EINVAL)
+    z = os.path.join(d, "off.zip")
+    with zipfile.ZipFile(z, "w", zipfile.ZIP_STORED) as f:
+        f.writestr("top/a.txt", "A" * 4000)
+        f.writestr("top/b.txt", "B" * 4000)
+    data = open(z, "rb").read()
+    cut = data.index(b"B" * 100)
+    open(z, "wb").write(data[:cut - 2000] + data[cut:])   # drop 2000 bytes before b.txt's data
+    expect_fail(lambda: bl.safe_extract(z, os.path.join(d, "o"), strip=1), "damaged")
 
 
 def main():

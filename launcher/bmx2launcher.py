@@ -18,6 +18,7 @@ Python, downloaded), bmx2recomp/ (the project: recompilers and runtime), work/
 (files read from the disc, generated code, objects) and game/ (the built game,
 bmx2.ini and its log). Updates never touch game/, so your settings are kept.
 """
+import errno
 import hashlib
 import http.client
 import json
@@ -196,6 +197,12 @@ def safe_extract(zpath, dest, strip=0, skip=(), only=None):
             _extract_members(z, base, strip, skip, only)
     except (zipfile.BadZipFile, zlib.error, EOFError):
         raise Fail("the download is damaged; try again")
+    except OSError as e:
+        # a central directory whose offsets do not match the data makes zipfile seek
+        # before the start (EINVAL); other OSErrors (disk full, access) keep their message
+        if e.errno == errno.EINVAL and e.filename is None:
+            raise Fail("the download is damaged; try again")
+        raise
 
 
 def _extract_members(z, base, strip, skip, only):
