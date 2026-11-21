@@ -348,6 +348,16 @@ directory/file is a host one. Slot 2 is empty (GetInfo -10).
 - Not done: SetFileInfo only renames; free space is a fixed 7000 clusters;
   no PS1 cards, no real .ps2 card image (a folder, not an 8 MB file).
 
+## Coverage crawls (2026-11-20)
+PAD_SCRIPT now takes 4096 events (pad.c). Scripted crawls with
+tools/iterate.sh found no missing code:
+- Freeride in Woodward Camp, ~1000 random trick/direction presses over 6000
+  frames while riding (tricks fired: Rocket Air, X-Up, Turndown, combos).
+- Park Editor, ~120 random presses over 4800 frames (place, rotate, copy).
+On a fresh card only Woodward Camp is open; the other 5 levels (Trainyards,
+Swamp Trails, Commercial District, Galloon Water Park, Hwy 47 Cloverleaf)
+say "play more to unlock" and were not crawled.
+
 ## Not written yet
 In the GS: see "Not done" above. In audio: reverb, volume sweeps, noise.
 

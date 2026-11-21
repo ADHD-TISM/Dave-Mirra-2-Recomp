@@ -66,13 +66,13 @@ static const struct { const char *name; u16 bit; } bnames[] = {
 };
 
 typedef struct { u64 frame; u16 buttons; } script_ev;
-static script_ev script[256];
+static script_ev script[4096];
 static int nscript = -1;
 
 static void script_load(void) {
     nscript = 0;
     const char *s = getenv("PAD_SCRIPT");
-    while (s && *s && nscript < 256) {
+    while (s && *s && nscript < 4096) {
         char *e; u64 f = strtoull(s, &e, 10);
         if (*e != ':') break;
         s = e + 1;
