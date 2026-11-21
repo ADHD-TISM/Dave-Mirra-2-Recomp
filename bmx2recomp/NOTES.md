@@ -582,6 +582,17 @@ scratch folders with BMX2_CLANG set (the 190 MB compiler download not re-run):
 - The packaged exe cannot update itself; it points to the releases page,
   and the repository has no releases yet.
 
+## Build time (2026-11-21)
+The first launcher build took ~100 s on 16 cores, 98 s of it vu.c: the VU1
+program was one function of 1388 inlined pairs, and clang's loop passes
+(LoopRotate, LoopFullUnroll, LICM, GVN) grow faster than the function.
+recomp_vu.py now emits chunks of 64 pairs (CHUNK), one function each; a jump
+out of a chunk saves the pipeline state (vu_rs: next, ea, bp, bt, guard) and
+returns to a dispatcher. vu.c 98 -> 8 s, all 47 files 99 -> 12 s, launcher
+build 13 s. VU_CHECK=1 over 6000 frames: 1,055,681 runs, 0 mismatches; turbo
+7000 frames 31.4-36.7 s vs 37.1-37.3 s before (not slower). EE translation
+takes 3 s (the launcher message said a minute).
+
 ## Next step (recommended, 2026-11-21)
 1. Playtest further; add missing code from any message box. Every level now
    loads and rides in scripted crawls (see "Levels and cheats").
