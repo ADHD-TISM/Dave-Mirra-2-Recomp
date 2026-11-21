@@ -64,14 +64,16 @@ static void xi_load(void);
 /* XInputGetState on an empty slot is slow (it looks for the device each call):
    a slot that was empty is tried again only once a second */
 static u16 rumble_now[4];               /* last motor values sent per XInput slot: large << 8 | small */
+#define RUMBLE_UNKNOWN 0xffff           /* not delivered: the game never makes it (small is 0/1) */
+static int xi_present[4];               /* the slot's last reads found a pad */
 static int xi_read(DWORD idx, xi_state *x) {
     static u64 retry_at[4]; static int misses[4];
     if (!xi_tried) xi_load();
     if (!xi_get || idx > 3 || g_frame < retry_at[idx]) return 0;
-    if (xi_get(idx, x) == 0) { misses[idx] = 0; return 1; }
+    if (xi_get(idx, x) == 0) { misses[idx] = 0; xi_present[idx] = 1; return 1; }
     /* a connected pad that misses one read (a wireless blip) is retried next frame;
        only after 3 misses in a row is the slot treated as empty */
-    if (++misses[idx] >= 3) { retry_at[idx] = g_frame + 60; rumble_now[idx] = 0; }   /* resend vibration on replug */
+    if (++misses[idx] >= 3) { retry_at[idx] = g_frame + 60; rumble_now[idx] = RUMBLE_UNKNOWN; xi_present[idx] = 0; }   /* resend vibration on replug */
     return 0;
 }
 
@@ -97,15 +99,19 @@ static int player_slot(int port) {
 static u64 rumble_retry[4];             /* a send failed (no pad): next try at this frame */
 static void rumble_send(int idx, u16 v) {
     if (idx < 0 || idx > 3 || rumble_now[idx] == v || g_frame < rumble_retry[idx]) return;
-    if (g_log_pad) LOG("pad: rumble slot %d large %u small %u at frame %llu\n", idx, v >> 8, v & 1, (unsigned long long)g_frame);
+    if (xi_set && !xi_present[idx]) return;   /* no pad there: sent when one is read again */
+    if (g_log_pad) LOG("pad: rumble slot %d large %u small %u at frame %llu\n", idx, v >> 8, (v & 0xff) != 0, (unsigned long long)g_frame);
     if (!xi_set) { rumble_now[idx] = v; return; }
     xi_vibration vib = { (WORD)((v >> 8) * 257), (WORD)((v & 0xff) ? 0xffff : 0) };
-    /* only a delivered value is remembered: a pad plugged in again gets the
-       current value on the next try (once a second while the slot is empty) */
+    /* only a delivered value is remembered; a failed one (no pad, a wireless
+       blip) leaves the slot unknown, so the next value, a stop included, is
+       retried once a second until it gets through */
     if (xi_set((DWORD)idx, &vib) == 0) rumble_now[idx] = v;
-    else { rumble_now[idx] = 0; rumble_retry[idx] = g_frame + 60; }
+    else { rumble_now[idx] = RUMBLE_UNKNOWN; rumble_retry[idx] = g_frame + 60; }
 }
-static void rumble_stop_all(void) { for (int i = 0; i < 4; i++) if (rumble_now[i]) rumble_send(i, 0); }
+static void rumble_stop_all(void) {
+    for (int i = 0; i < 4; i++) if (rumble_now[i]) { rumble_retry[i] = 0; rumble_send(i, 0); }
+}
 
 /* newest motor values the game DMA'd for a port: large << 8 | small (0 = off) */
 static u16 rumble_read(int port) {
@@ -189,7 +195,7 @@ void pad_movie_opened(const char *nm) {
 static int intro_press(void) {
     extern u64 g_ipu_last_frame;
     if (intro_movie != 1) return 0;
-    int decoded = g_ipu_last_frame >= intro_opened;            /* this movie has decoded a picture */
+    int decoded = g_ipu_last_frame > intro_opened;             /* this movie has decoded a picture */
     if (decoded && g_frame - g_ipu_last_frame < 10) return g_cfg.skip_intro && (g_frame & 4);
     if (decoded && intro_last && g_frame - g_ipu_last_frame > 30) intro_movie = 0;
     return 0;

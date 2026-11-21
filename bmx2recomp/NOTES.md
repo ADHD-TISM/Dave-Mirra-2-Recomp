@@ -727,9 +727,11 @@ mode before INTRO.PSS shows its first picture. Failing the .PSS open (--no-movie
 not a skip: the game then calls a null method.
 
 ## v0.1.3 review follow-ups (2026-11-21)
-- Vibration: a value is remembered only when XInputSetState succeeds; a
-  failed send retries once a second, and a slot whose reads miss 3 times is
-  marked unsent, so a replugged pad gets the game's current motor value.
+- Vibration: a value is remembered only when XInputSetState succeeds. A
+  failed send (a wireless blip) marks the slot unknown (0xffff, never a game
+  value), so the next value, a stop included, is retried once a second. A slot
+  whose reads miss 3 times is unknown and not sent to until a read finds a pad
+  again; then it gets the game's current value. No pad = no XInput sends.
 - build.sh also rebuilds objects older than runtime/config.h (adding a
   bmx2_cfg field used to leave gs_gl.o/main.o with old offsets in dev builds;
   the launcher's build already hashes every header).
