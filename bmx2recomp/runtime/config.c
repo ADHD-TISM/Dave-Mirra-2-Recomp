@@ -68,6 +68,7 @@ static void set(const char *k, char *v, int line) {
                                        if (!getenv("SPU_VOLUME")) { snprintf(e, sizeof e, "SPU_VOLUME=%d", n); _putenv(e); } }
     else if (!_stricmp(k, "gs_thread")) g_gs_thread_cfg = as_bool(v);
     else if (!_stricmp(k, "gamepad")) g_cfg.gamepad = as_bool(v);
+    else if (!_stricmp(k, "widescreen")) g_cfg.widescreen = as_bool(v);
     else if (!_stricmp(k, "rumble")) g_cfg.rumble = as_bool(v);
     else if (!_stricmp(k, "pad2")) g_cfg.pad2 = !_stricmp(v, "off") || !_stricmp(v, "0") ? 0 : !_stricmp(v, "gamepad1") ? 2 : 1;
     /* debug switches the runtime reads from the environment (once, lazily) */

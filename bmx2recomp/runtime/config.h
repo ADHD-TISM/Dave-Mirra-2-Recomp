@@ -12,6 +12,7 @@ typedef struct {
     int scale;              /* internal resolution 1..4 (0 = leave the command line's) */
     int window_w, window_h; /* client size; 0 = default */
     int fullscreen;         /* borderless on the chosen monitor */
+    int widescreen;         /* 1 = 16:9: wider 3D view (camera hook in main.c) and a 16:9 picture */
     int stretch;            /* 1 = fill the window instead of 4:3 */
     int smooth;             /* 1 = linear filter when enlarging, 0 = nearest */
     int frame_limit;        /* 0 = run as fast as possible */

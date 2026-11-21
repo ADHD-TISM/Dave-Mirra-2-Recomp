@@ -4,7 +4,7 @@ Everything lives in `Desktop\rea\Dave Mirra PS2\` (moved 2026-11-19):
 `disc\` = extracted disc (from the .bin, MODE2/2352), `bmx2recomp\` = this project.
 
 ## Build / run
-    python -I tools/recomp_ee.py ../disc/SLUS_201.59 gen     # EE ELF -> gen/*.c
+    python -I tools/recomp_ee.py ../disc/SLUS_201.59 gen --extra extra_ee.txt   # EE ELF -> gen/*.c (without --extra ~70 functions are missing)
     sh build.sh                                              # -> build/bmx2.exe (clang)
     build/bmx2.exe --turbo --log-sys 1 --frames 900 ../disc  # headless, logs to stderr
 `OPT="-O1 -DEE_TRACE" sh build.sh` (after `rm -rf build/obj`) records function
@@ -668,6 +668,21 @@ fn 16bb80 checks the Vibration option bit (0x21c41c + 17 * player) and a
 global block flag (gp-3568 = 0x25ba80).
 Debug aid: EE_TRACE builds take EE_COUNT=addr[,addr..] (up to 8) and print
 how often those functions were entered (direct calls only, not tail jumps).
+
+## Widescreen (2026-11-21)
+fn 100ad0(width, height) is the screen setup: it stores x = 1.0 and y =
+(height / width) * 4/3 (the only reader of the 4:3 constant at 0x254880 =
+gp - 0x7ff0) at 0x2073c0/c4; cameras copy them through fn 11dfd0(cam, x = f12,
+y = f13) into cam+68/+72 when they are made (cam+56 is the FOV, a 16-bit
+angle, 10012 = 55 deg). Writing 0x2073c0 later does nothing; patching the
+4:3 constant only scales Y (Vert-).
+tools/recomp_ee.py now has HOOKS: functions that start with ee_hook(addr)
+(runtime/main.c). With bmx2.ini widescreen = 1 (launcher Video tab) the hook
+on 11dfd0 multiplies x by 0.75 (Hor+: same height, 4/3 wider view) and the
+picture is presented at 16:9 (auto window 1280x720). Checked in Woodward:
+same subject size, more scene at both sides, nothing missing at the edges.
+The 2D HUD and menus are stretched (not corrected). Changing recomp_ee.py
+changes the launcher's regen key, so installs regenerate gen/ once.
 
 ## Next step (recommended, 2026-11-21)
 1. Playtest further; add missing code from any message box. Every level now

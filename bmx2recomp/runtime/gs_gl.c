@@ -1153,8 +1153,9 @@ static void present_rect_(u32 fbp, u32 fbw, u32 psm, u32 dbx, u32 dby, u32 w, u3
     glColorMask(1, 1, 1, 1);
     glClearColor(0, 0, 0, 1); glClear(GL_COLOR_BUFFER_BIT);
     if (src) {
-        int vw = cw, vh = cw * 3 / 4;                 /* 4:3 */
-        if (vh > ch) { vh = ch; vw = ch * 4 / 3; }
+        int an = g_cfg.widescreen ? 16 : 4, ad = g_cfg.widescreen ? 9 : 3;   /* 4:3, or 16:9 with widescreen */
+        int vw = cw, vh = cw * ad / an;
+        if (vh > ch) { vh = ch; vw = ch * an / ad; }
         if (g_cfg.stretch) { vw = cw; vh = ch; }
         glViewport((cw - vw) / 2, (ch - vh) / 2, vw, vh);
         glUseProgram(cprog);
@@ -1252,7 +1253,7 @@ int gsgl_init(int show_window, int scale) {
     wc.lpfnWndProc = wndproc; wc.hInstance = GetModuleHandleA(NULL);
     wc.lpszClassName = "bmx2recomp"; wc.hCursor = LoadCursor(NULL, IDC_ARROW); wc.style = CS_OWNDC;
     RegisterClassA(&wc);
-    RECT r = { 0, 0, g_cfg.window_w ? g_cfg.window_w : 1280, g_cfg.window_h ? g_cfg.window_h : 960 };
+    RECT r = { 0, 0, g_cfg.window_w ? g_cfg.window_w : 1280, g_cfg.window_h ? g_cfg.window_h : (g_cfg.widescreen ? 720 : 960) };
     AdjustWindowRect(&r, WS_OVERLAPPEDWINDOW, FALSE);
     int ww = r.right - r.left, wh = r.bottom - r.top, x = CW_USEDEFAULT, y = CW_USEDEFAULT;
     EnumDisplayMonitors(NULL, NULL, mon_cb, 0);

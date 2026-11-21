@@ -424,13 +424,17 @@ def cond(i):
     if op == 1: return f'(s64){rs} >= 0' if i.rt & 1 else f'(s64){rs} < 0'
     raise ValueError(hex(i.w))
 
+# functions that start with a call to the runtime's ee_hook(addr) (runtime/main.c),
+# which may adjust their arguments: 0x11dfd0 camera aspect setter (widescreen)
+HOOKS = {0x0011dfd0}
+
 def callexpr(t, entries):
     if t in entries: return f'f_{t:08x}();'
     return f'ee_call(0x{t:08x}u);'
 
 def gen_func(exe, f, entries, out):
     a0 = f.entry
-    out.append(f'void f_{a0:08x}(void) {{ FENTRY(0x{a0:08x}u);')
+    out.append(f'void f_{a0:08x}(void) {{ FENTRY(0x{a0:08x}u);' + (f' ee_hook(0x{a0:08x}u);' if a0 in HOOKS else ''))
     addrs = sorted(f.addrs); aset = f.addrs
     needed = set(t for t in f.labels if t in aset)
     if addrs and addrs[0] != a0:

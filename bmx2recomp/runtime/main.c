@@ -118,6 +118,16 @@ static void trace_dump(void) {
 static void trace_dump(void) {}
 #endif
 
+/* entry hooks: tools/recomp_ee.py emits ee_hook(addr) at the start of the
+ * functions in its HOOKS set, so the runtime can adjust arguments */
+void ee_hook(u32 a) {
+    switch (a) {
+    case 0x0011dfd0:   /* camera aspect setter (cam+68 = f12 x, cam+72 = f13 y), from fn 100ad0 values */
+        if (g_cfg.widescreen) ee.fpr[12].f *= 0.75f;   /* Hor+: same height, 4/3 wider view */
+        break;
+    }
+}
+
 static void on_exit_report(void) { trace_dump(); fflush(stdout); fflush(stderr); }
 
 void check_frame_limit(void) {

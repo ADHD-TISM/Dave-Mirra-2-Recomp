@@ -834,6 +834,8 @@ SETTINGS = [
      "1 = show frames in step with a 60 or 120 Hz screen (smoother); 0 = timer only"),
     ("fullscreen", "Video", "Start in fullscreen", "bool", B01, "0",
      "1 = start in borderless fullscreen (F11 or Alt+Enter toggles while playing)"),
+    ("widescreen", "Video", "Widescreen (16:9)", "bool", B01, "0",
+     "1 = a wider 3D view shown at 16:9 (the menus and on-screen text are stretched)"),
     ("aspect", "Video", "Aspect ratio", "choice", ["4:3", "stretch"], "4:3",
      "4:3 = console shape with black bars, stretch = fill the window"),
     ("filter", "Video", "Picture filter", "choice", ["smooth", "nearest"], "smooth",
