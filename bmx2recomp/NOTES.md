@@ -732,7 +732,8 @@ not a skip: the game then calls a null method.
   value), so the next value, a stop included, is retried once a second. A slot
   whose reads miss 3 times is unknown and not sent to until a read finds a pad
   again; then it gets the game's current value. No pad = no XInput sends.
-- build.sh also rebuilds objects older than runtime/config.h (adding a
+- build.sh also rebuilds runtime/ objects older than runtime/config.h or
+  runtime/gs.h; gen/ includes neither (adding a
   bmx2_cfg field used to leave gs_gl.o/main.o with old offsets in dev builds;
   the launcher's build already hashes every header).
 - iop.c: one ZCDDVD open check feeds skip_intro and --no-movies.
