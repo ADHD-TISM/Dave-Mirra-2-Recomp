@@ -1088,7 +1088,11 @@ static void present_rect_(u32 fbp, u32 fbw, u32 psm, u32 dbx, u32 dby, u32 w, u3
         if (have && g_frame > 60) {
             double gap = (double)(t1.QuadPart - last.QuadPart) * 1000.0 / fq.QuadPart;
             n_presents++;
-            if (gap > 20) { n_present_gaps++; if (g_frame > 6600) n_present_gaps_late++; }
+            if (gap > 20) {
+                n_present_gaps++; if (g_frame > 6600) n_present_gaps_late++;
+                extern int g_log_frames;
+                if (g_log_frames) LOG("frames: present gap %.1f ms at frame %llu\n", gap, (unsigned long long)g_frame);
+            }
             if (gap > present_gap_max && g_frame > 6600) present_gap_max = gap;
         }
         have = 1; last = t1;

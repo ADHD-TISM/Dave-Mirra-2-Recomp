@@ -64,6 +64,8 @@ static void set(const char *k, char *v, int line) {
     else if (!_stricmp(k, "filter")) g_cfg.smooth = _stricmp(v, "nearest") != 0;
     else if (!_stricmp(k, "frame_limit")) g_cfg.frame_limit = as_bool(v);
     else if (!_stricmp(k, "vsync")) g_cfg.vsync = as_bool(v);
+    else if (!_stricmp(k, "volume")) { char e[32]; int n = atoi(v); if (n < 0) n = 0; if (n > 100) n = 100;   /* spu2.c reads SPU_VOLUME */
+                                       if (!getenv("SPU_VOLUME")) { snprintf(e, sizeof e, "SPU_VOLUME=%d", n); _putenv(e); } }
     else if (!_stricmp(k, "gs_thread")) g_gs_thread_cfg = as_bool(v);
     else if (!_stricmp(k, "gamepad")) g_cfg.gamepad = as_bool(v);
     /* debug switches the runtime reads from the environment (once, lazily) */

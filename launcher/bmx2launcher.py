@@ -772,6 +772,8 @@ SETTINGS = [
      "4:3 = console shape with black bars, stretch = fill the window"),
     ("filter", "Video", "Picture filter", "choice", ["smooth", "nearest"], "smooth",
      "How the picture is enlarged to the window: smooth = blended, nearest = sharp pixels"),
+    ("volume", "Audio", "Volume (%)", "choice", ["100", "75", "50", "25", "0"], "100",
+     "Game sound volume in percent (music, effects and movie sound)"),
     ("gs_thread", "Debug", "Graphics on its own thread", "bool", B01, "1",
      "1 = VIF1, VU1 and drawing run on a second CPU thread (smoother); 0 = all on one thread"),
     ("async_tex_sync", "Debug", "Approximate texture write-back", "bool", B01, "0",
@@ -1218,9 +1220,6 @@ def gui(root_dir, notice=None):
         if name == "Debug":
             dbg = ttk.Frame(stabs["Debug"])
             dbg.grid(row=r, column=0, columnspan=2, sticky="w", pady=(12, 0))
-    ttk.Label(stabs["Audio"], style="Muted.TLabel", wraplength=560,
-              text="The game has no sound yet (the PS2 sound chip is not recreated). Audio settings will appear "
-                   "here when it has.").pack(anchor="w")
 
     dc = tk.BooleanVar(value=C.get("debug_console", False))
     ttk.Checkbutton(dbg, text="Show the console window while playing", variable=dc).pack(anchor="w", pady=2)

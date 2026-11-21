@@ -102,6 +102,24 @@ void gs_write_row32(u32 psm, u32 bp, u32 bw, u32 y, u32 w, const u32 *v) {
     }
 }
 
+/* n pixels of a 32-bit-word format (CT32/CT24/Z32/Z24) from x0 on one row; x wraps at 2048.
+ * Host -> local transfers and texture decodes use these instead of one call per pixel
+ * (a 512x256 movie picture each was ~3-4 ms of the graphics thread). */
+int gs_psm_span32(u32 psm) { return psm == PSMCT32 || psm == PSMCT24 || psm == PSMZ32 || psm == PSMZ24; }
+void gs_write_span32(u32 psm, u32 bp, u32 bw, u32 x0, u32 y, u32 n, const u32 *v) {
+    int z = psm == PSMZ32 || psm == PSMZ24;
+    if (psm == PSMCT24 || psm == PSMZ24) {
+        for (u32 i = 0; i < n; i++) { u32 *p = vw(gs_addr32(bp, bw, (x0 + i) & 2047, y, z)); *p = (*p & 0xff000000u) | (v[i] & 0xffffff); }
+    } else {
+        for (u32 i = 0; i < n; i++) *vw(gs_addr32(bp, bw, (x0 + i) & 2047, y, z)) = v[i];
+    }
+}
+void gs_read_span32(u32 psm, u32 bp, u32 bw, u32 y, u32 n, u32 *out) {
+    int z = psm == PSMZ32 || psm == PSMZ24;
+    u32 m = (psm == PSMCT24 || psm == PSMZ24) ? 0xffffffu : 0xffffffffu;
+    for (u32 x = 0; x < n; x++) out[x] = *vw(gs_addr32(bp, bw, x, y, z)) & m;
+}
+
 int gs_psm_bpp(u32 psm) {
     switch (psm) {
     case PSMCT32: case PSMZ32: case PSMCT24: case PSMZ24: case PSMT8H: case PSMT4HL: case PSMT4HH: return 32;

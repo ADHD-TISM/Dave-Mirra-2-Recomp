@@ -93,7 +93,8 @@ void gst_present(const u64 *priv) {
     /* at most 2 frames in flight: the picture may lag, the game may not run away */
     while (ld(&presents_done) + 2 < presents_queued) { n_waits_frames++; ee_wait(); }
     presents_queued++;
-    put(C_PRESENT, 0, 0, priv, 0x20 * 8);
+    LARGE_INTEGER t; QueryPerformanceCounter(&t);   /* when the EE queued it (latency log) */
+    put(C_PRESENT, (u32)t.QuadPart, (u32)(t.QuadPart >> 32), priv, 0x20 * 8);
 }
 
 void gst_sync(void) {
@@ -115,6 +116,7 @@ void gst_apply_csr(void) {
 static DWORD WINAPI worker(void *arg) {
     (void)arg;
     gsgl_bind_context();
+    { void prof_here(void); prof_here(); }
     for (;;) {
         u64 tail = q_tail, head = ld(&q_head);
         if (tail == head) {
@@ -139,7 +141,17 @@ static DWORD WINAPI worker(void *arg) {
         case C_VU1: vu1_start(c.a); break;
         case C_VIF1_RESET: vif1_worker_reset(); break;
         case C_VIF1_REG: vif1_worker_reg(c.a, c.b); break;
-        case C_PRESENT: gs_present_from((const u64 *)data); __atomic_fetch_add(&presents_done, 1, __ATOMIC_ACQ_REL); break;
+        case C_PRESENT: {
+            LARGE_INTEGER t0; QueryPerformanceCounter(&t0);
+            gs_present_from((const u64 *)data); __atomic_fetch_add(&presents_done, 1, __ATOMIC_ACQ_REL);
+            extern int g_log_frames;
+            if (g_log_frames) {
+                LARGE_INTEGER t1, fq; QueryPerformanceCounter(&t1); QueryPerformanceFrequency(&fq);
+                s64 q = (s64)(((u64)c.b << 32) | c.a);
+                double wait = (double)(t0.QuadPart - q) * 1000.0 / fq.QuadPart, took = (double)(t1.QuadPart - t0.QuadPart) * 1000.0 / fq.QuadPart;
+                if (wait + took > (getenv("PRESENT_LOG_ALL") ? -1 : 3)) LOG("gst: present at frame %llu: %.1f ms after it was queued, %.1f ms to present\n", (unsigned long long)g_frame, wait, took);
+            }
+            break; }
         default: LOG("gst: bad command %u at %llu\n", c.type, (unsigned long long)tail); exit(6);
         }
         st(&q_tail, tail + size);

@@ -78,8 +78,9 @@ void ee_watch_hit(u32 a, int n, u64 v) {
     if (hits++ > 400) return;
 #ifdef EE_TRACE
     extern u32 ee_trace_buf[1 << 22]; extern u32 ee_trace_pos;
-    LOG("watch: frame %llu write%d %08x = %llx  (fn %08x < %08x < %08x)\n", (unsigned long long)g_frame, n * 8, a, (unsigned long long)v,
-        ee_trace_buf[(ee_trace_pos - 1) & 0x3fffff], ee_trace_buf[(ee_trace_pos - 2) & 0x3fffff], ee_trace_buf[(ee_trace_pos - 3) & 0x3fffff]);
+    LOG("watch: frame %llu write%d %08x = %llx  (fn", (unsigned long long)g_frame, n * 8, a, (unsigned long long)v);
+    for (int k = 1; k <= 10; k++) LOG(" %08x", ee_trace_buf[(ee_trace_pos - k) & 0x3fffff]);   /* most recent first */
+    LOG(") a0 %08x a1 %08x a2 %08x s4 %08x ra %08x\n", GW(4), GW(5), GW(6), GW(20), GW(31));
 #else
     LOG("watch: frame %llu write%d %08x = %llx  ra %08x\n", (unsigned long long)g_frame, n * 8, a, (unsigned long long)v, GW(31));
 #endif

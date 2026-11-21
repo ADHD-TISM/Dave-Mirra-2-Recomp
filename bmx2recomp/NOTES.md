@@ -143,10 +143,15 @@ Files: `gs_mem.c` (swizzle), `gs.c` (front end), `gs_gl.c` (GPU back end),
   after the next pair; Q/P land after their latency unless WAITQ/WAITP;
   MAC/status/clip flags without delay; XGKICK feeds path 1 at once. VU1 code
   is a jump table at 0 (`b target` + `iaddiu vi13` in the delay slot).
-- Open question: the movie quad's colour fades 1 -> 0x40 and stays at 0x40
-  (vertex alpha 0x7f, MODULATE, blend (Cs-Cd)*As+Cd), so the movie shows at
-  half the decoded brightness. Our CSC writes alpha 0x80. Check against real
-  hardware/PCSX2 output before "fixing" anything.
+- Movie brightness (settled 2026-11-20, game behaviour, not ours): the movie
+  quad's colour is 0x40 with alpha 0x7f, MODULATE, so the movie shows at half
+  the decoded brightness. Traced with the EE write watch: the draw function
+  fn_00104c68 builds vertex colours as model byte >> ctx[52] (context at
+  0x25cc68, shift set by fn_001040d0: 1 unless the caller passes flag bit 4,
+  which the movie player does not), and the movie source colour is 0x80,
+  alpha 0xff -> 0x40 / 0x7f. All of that is the game's own code and data;
+  our MODULATE (Cf * Ct >> 7) matches the GS manual, so a real PS2 shows the
+  same. Nothing to fix.
 
 ## Pad (2026-11-19, fifth session) — works, menus and a level reached
 `runtime/pad.c` is the IOP side of padman (sids 0x80000100/0x80000101) at
@@ -388,6 +393,38 @@ fn_00107278 on level load).
   EE store into the range logs frame, value and the last 3 function entries
   (main.c ee_watch_hit). Use GS_THREAD=0 with it.
 
+## Levels and cheats (2026-11-21)
+The main menu's CheatSniffer (fn_001adf60) matches key strings: each D-pad /
+Square press appends a digit (1 Up, 2 Down, 3 Left, 4 Right, 5 Square) to a
+32-char ring at 0x246568; the 10 codes are pointed to from 0x246540, their
+effects in the jump table at 0x2509c0. Rider profiles: 17 x 968 bytes at
+0x2174a8; +388 + 68*k bit 0 = level k unlocked (8 levels).
+- Code 7, 13241134125 = Up Left Down Right Up Up Left Right Up Down Square,
+  sets every rider's level bits (checked in an EE dump: 0,0,1,0,... ->
+  all 1). Code 8 (16 presses, 1423441234134425) sets much more (looks like
+  "everything"). The others were not identified.
+- With code 7, Freeride crawls (tools: PAD_SCRIPT + iterate.sh, ~6000 frames
+  of random tricks each) of Trainyards, Swamp Trails, Commercial District,
+  Galloon Water Park and Hwy 47 Cloverleaf all loaded and rode with no
+  missing code. After the cheat the cursor is on Cool Stuff (Freeride = 3x Up).
+
+## Frames shown twice in boot / logos (fixed 2026-11-21)
+388 of the first 1200 frames reached the screen more than 20 ms apart, every
+4th frame during the 15 fps logo movies. Not the graphics thread (presents
+started <0.1 ms after queueing, took <0.3 ms) and not vsync: the EE queued
+PRESENT at the end of the frame's work, before pace() waited, so screen times
+followed the work time, which jumps ~4 ms on frames that decode a movie
+picture. kernel.c ee_event now calls pace() first, then gs_vsync() and
+pad_vsync(): 388 -> 7 (loads), whole route 42, none in the level.
+--log-frames also logs "present gap" lines; PRESENT_LOG_ALL=1 logs every
+present's queue latency. PROF_GS=1 makes the profiler sample the graphics
+thread. Host->local 32-bit uploads and CT32/CT24 texture decodes now go by
+rows (gs_write_span32 / gs_read_span32) instead of a call per pixel.
+
+## Volume (2026-11-21)
+SPU_VOLUME=<percent> scales the mix (spu2.c); `volume = N` in bmx2.ini (launcher
+Audio tab) sets it. Real-time test runs use SPU_VOLUME=50 (user request).
+
 ## Not written yet
 In the GS: see "Not done" above. In audio: reverb, volume sweeps, noise.
 
@@ -470,11 +507,8 @@ mode. Checked on the intro movie: the letterbox edge row alternated
 (Sleep-based, swap interval 0) was not measured and may add judder on
 high-refresh monitors.
 
-## Next step (recommended, 2026-11-20)
-1. Playtest further (the user is unlocking levels); add missing code from
-   any message box. The 5 levels besides Woodward Camp are untested.
-2. Settle the movie brightness question (see GS section).
-3. Menus/movies still show ~400 frames twice per run (gaps over 20 ms);
-   not looked at.
-4. Audio: the game uses no reverb or volume sweeps (no libsd effect calls,
-   0 sweep-mode reads), so spu2.c covers what it uses.
+## Next step (recommended, 2026-11-21)
+1. Playtest further; add missing code from any message box. Every level now
+   loads and rides in scripted crawls (see "Levels and cheats").
+2. Single long frames at loads (300-560 ms) still cause audio gaps and a
+   frame hitch; the loads themselves are the cost (not looked at).

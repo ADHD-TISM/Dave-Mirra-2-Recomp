@@ -297,6 +297,11 @@ void spu2_update(void) {
     while (mixed < target) {
         s32 l = 0, r = 0;
         mix_frame(&l, &r);
+        {   /* SPU_VOLUME=<percent> (default 100): output volume, e.g. 50 for test runs */
+            static int vol = -1;
+            if (vol < 0) { const char *e = getenv("SPU_VOLUME"); vol = e ? atoi(e) : 100; if (vol < 0) vol = 0; }
+            if (vol != 100) { l = l * vol / 100; r = r * vol / 100; }
+        }
         if (l > 32767) l = 32767; if (l < -32768) l = -32768;
         if (r > 32767) r = 32767; if (r < -32768) r = -32768;
         u32 fr = (u16)l | ((u32)(u16)r << 16);

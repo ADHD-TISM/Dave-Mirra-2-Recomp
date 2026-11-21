@@ -194,15 +194,23 @@ static void pace(void) {
      * lines presentation up with the scan-out. */
     double target = vs ? (double)perf_freq.QuadPart / 60.0 : (double)perf_freq.QuadPart * 1001.0 / 60000.0;
     double el = (double)(now.QuadPart - perf_last.QuadPart);
+    DWORD slept = 0;
     if (el < target) {
         DWORD ms = (DWORD)((target - el) * 1000.0 / perf_freq.QuadPart);
-        if (ms > 1) Sleep(ms - 1);
+        if (ms > 1) { slept = ms - 1; Sleep(ms - 1); }
         do { QueryPerformanceCounter(&now); } while ((double)(now.QuadPart - perf_last.QuadPart) < target);
         perf_last.QuadPart += (LONGLONG)target;
     } else if (el < 4 * target) {
         perf_last.QuadPart += (LONGLONG)target;     /* a slow frame: keep the schedule, later frames catch up */
     } else perf_last = now;                         /* far behind (load, debugger): start again from now */
+    static LARGE_INTEGER prev_done;
     QueryPerformanceCounter(&done);
+    if (g_log_frames && prev_done.QuadPart) {
+        double ms = (double)(done.QuadPart - prev_done.QuadPart) * 1000.0 / perf_freq.QuadPart;
+        if (ms > 20) LOG("frames: pace gap %.1f ms at frame %llu (slept %lu, late by %.1f)\n", ms, (unsigned long long)g_frame,
+                         (unsigned long)slept, (double)(now.QuadPart - perf_last.QuadPart) * 1000.0 / perf_freq.QuadPart);
+    }
+    prev_done = done;
 }
 
 static void recompute_next(void) {
@@ -220,10 +228,15 @@ void ee_event(void) {
         { extern void check_frame_limit(void); check_frame_limit(); }
         gs_csr ^= 0x2000; gs_csr |= 8;
         if (vsync_flag_addr) { mw32(vsync_flag_addr, 1); if (vsync_field_addr) mw64(vsync_field_addr, (gs_csr >> 13) & 1); }
+        spu2_update();
+        /* wait for the frame's deadline first, then present: the screen then gets
+         * frames at even intervals however long the frame's work took (presenting
+         * before the wait gave ~4 ms jitter on movie frames that decode a picture,
+         * ~400 frames shown twice in boot + logos). Input is read after the wait
+         * too, as late as possible. */
+        pace();
         gs_vsync();
         { void pad_vsync(void); pad_vsync(); }
-        spu2_update();
-        pace();
         if (!(gs_imr & 0x800)) intc_raise(0);
         intc_raise(2);
     }

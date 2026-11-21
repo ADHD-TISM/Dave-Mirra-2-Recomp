@@ -96,6 +96,17 @@ void gs_decode_texture(const gs_draw_state *s, u32 *out) {
     u32 lut[256]; int pal = 0;
     if (psm == PSMT8 || psm == PSMT8H) { for (int i = 0; i < 256; i++) lut[i] = clut_entry(i, s, 0); pal = 1; }
     if (psm == PSMT4 || psm == PSMT4HL || psm == PSMT4HH) { for (int i = 0; i < 16; i++) lut[i] = clut_entry(i, s, 1); pal = 1; }
+    if (psm == PSMCT32 || psm == PSMZ32) {                 /* whole rows, no per-pixel call */
+        for (u32 y = 0; y < h; y++) gs_read_span32(psm, bp, bw, y, w, out + y * w);
+        return;
+    }
+    if (psm == PSMCT24 || psm == PSMZ24) {
+        for (u32 y = 0; y < h; y++) {
+            gs_read_span32(psm, bp, bw, y, w, out + y * w);
+            for (u32 x = 0; x < w; x++) out[y * w + x] = exp24(out[y * w + x], s);
+        }
+        return;
+    }
     for (u32 y = 0; y < h; y++)
         for (u32 x = 0; x < w; x++) {
             u32 v = gs_read_pixel(psm, bp, bw, x, y), c;
@@ -131,7 +142,19 @@ static void xfer_data(const u8 *p, u32 bytes) {
     if (!xfer.active) { if (g_log_gs) LOG("gs: image data with no transfer (%u bytes)\n", bytes); return; }
     int bpp = gs_psm_xfer_bpp(xfer.psm);
     if (bpp == 32) {
-        for (u32 i = 0; i + 4 <= bytes && xfer.active; i += 4) { u32 v; memcpy(&v, p + i, 4); xfer_put(v); }
+        u32 npx = bytes / 4, i = 0;
+        if (gs_psm_span32(xfer.psm)) {                       /* runs up to the end of each row */
+            while (i < npx && xfer.active) {
+                u32 run = xfer.w - xfer.x; if (run > npx - i) run = npx - i;
+                u32 tmp[2048]; if (run > 2048) run = 2048;
+                memcpy(tmp, p + 4 * i, run * 4);
+                gs_write_span32(xfer.psm, xfer.bp, xfer.bw, (xfer.sx + xfer.x) & 2047, (xfer.sy + xfer.y) & 2047, run, tmp);
+                n_xfer_px += run; xfer.x += run; i += run;
+                if (xfer.x >= xfer.w) { xfer.x = 0; if (++xfer.y >= xfer.h) xfer_done(); }
+            }
+            return;
+        }
+        for (; i < npx && xfer.active; i++) { u32 v; memcpy(&v, p + 4 * i, 4); xfer_put(v); }
         return;
     }
     for (u32 i = 0; i < bytes && xfer.active; i++) {

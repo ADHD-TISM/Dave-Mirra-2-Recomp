@@ -11,6 +11,12 @@
 static u64 keys[NB];
 static u32 counts[NB];
 static HANDLE main_thread;
+/* PROF_GS=1: sample the graphics thread (gsthread.c calls prof_here) instead of the EE thread */
+void prof_here(void) {
+    if (!getenv("PROF_GS") || !getenv("PROF")) return;
+    HANDLE h; DuplicateHandle(GetCurrentProcess(), GetCurrentThread(), GetCurrentProcess(), &h, 0, FALSE, DUPLICATE_SAME_ACCESS);
+    main_thread = h;
+}
 static volatile int running;
 static u64 from_frame, base;
 static u64 total;
