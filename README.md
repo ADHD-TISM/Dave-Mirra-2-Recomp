@@ -34,7 +34,7 @@ build tools into its folder and writes nothing outside it.
 
 ## Install and play
 
-1. Download `Dave Mirra 2 Launcher.exe` from the
+1. Download `Dave-Mirra-2-Launcher.exe` from the
    [Releases](https://github.com/ADHD-TISM/Dave-Mirra-2-Recomp/releases) page.
    Put it in an empty folder.
 2. Start the launcher once. It creates a folder called `Dave Mirra 2` next to it.
@@ -45,7 +45,8 @@ build tools into its folder and writes nothing outside it.
    about a minute.
 6. Open the **Play** tab and click **Play**.
 
-To update later, open **Update** and click **Update**, then build again.
+To update later, open **Update** and click **Update the project**, then build
+again. A new launcher comes as a new download from the Releases page.
 Updates keep your settings and memory card saves.
 
 ## Controls

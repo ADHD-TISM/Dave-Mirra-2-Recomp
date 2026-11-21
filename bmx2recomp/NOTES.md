@@ -585,8 +585,10 @@ scratch folders with BMX2_CLANG set (the 190 MB compiler download not re-run):
   with its downloaded embedded Python), the built game boots to riding;
   update when current ("up to date"), update from an older tag (re-downloads,
   game/ kept), update-launcher from version 1 (replaces the .py).
-- The packaged exe cannot update itself; it points to the releases page,
-  and the repository has no releases yet.
+- The packaged exe cannot update itself; it points to the releases page.
+  Release v0.1.1 (pre-release, 2026-11-21) carries Dave-Mirra-2-Launcher.exe,
+  launcher 4 built from 0c7532f (GitHub turns spaces in asset names into dots,
+  so the asset uses dashes).
 
 ## Build time (2026-11-21)
 The first launcher build took ~100 s on 16 cores, 98 s of it vu.c: the VU1
