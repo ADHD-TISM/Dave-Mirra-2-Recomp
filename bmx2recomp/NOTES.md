@@ -618,6 +618,21 @@ build 13 s. VU_CHECK=1 over 6000 frames: 1,055,681 runs, 0 mismatches; turbo
 7000 frames 31.4-36.7 s vs 37.1-37.3 s before (not slower). EE translation
 takes 3 s (the launcher message said a minute).
 
+## Player 2 (2026-11-21)
+pad.c now feeds port 1 slot 0 as well. bmx2.ini pad2 (launcher Gameplay tab):
+gamepad2 (default) = the second XInput pad is player 2; gamepad1 = the first
+XInput pad is player 2 and player 1 is the keyboard alone; off. Player 2
+reads as plugged in only while its pad is connected (or PAD2_SCRIPT is
+set, for headless runs); an empty XInput slot is polled once a second, as
+XInputGetState on an empty slot is slow. Analog/pressure/lock mode is kept
+per port. With player 2 plugged in the main menu's Multiplayer is no longer
+grey.
+Crawl (turbo, PAD_SCRIPT + PAD2_SCRIPT, 32000 frames): Multiplayer -> rider,
+bike, modifier setup for both players, Select Game (Best Run 2 min), player
+1 rides, New Record name entry (from A: Up, Left, Down = END, X), player 2
+ready, rides and lands tricks on its own input, Time Up, View Replay/Exit.
+No missing code. The other multiplayer games in Select Game were not tried.
+
 ## Next step (recommended, 2026-11-21)
 1. Playtest further; add missing code from any message box. Every level now
    loads and rides in scripted crawls (see "Levels and cheats").

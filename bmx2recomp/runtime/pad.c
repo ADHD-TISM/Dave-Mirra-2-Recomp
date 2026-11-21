@@ -14,10 +14,15 @@
  *   +0x70 state (6 stable, 0 disconnected)  +0x71 reqState (0 done, 2 busy)
  *   +0x72 currentTask (1 = info ready)
  *
- * Port 0 slot 0 is a DualShock 2 fed from the keyboard (window focused) and
- * the first XInput controller. Other ports read as disconnected.
+ * Port 0 slot 0 (player 1) is a DualShock 2 fed from the keyboard (window
+ * focused) and the first XInput controller. Port 1 slot 0 (player 2) is the
+ * second XInput controller (bmx2.ini pad2 = gamepad2, the default), or the
+ * first one (pad2 = gamepad1: then player 1 is the keyboard alone), or off
+ * (pad2 = off). Player 2 reads as plugged in only while that controller is
+ * connected. Multitap slots 1-3 read as disconnected.
  *
- * PAD_SCRIPT="frame:buttons[,frame:buttons...]" presses buttons from a frame
+ * PAD_SCRIPT (player 1) and PAD2_SCRIPT (player 2, which then reads as
+ * plugged in) = "frame:buttons[,frame:buttons...]" press buttons from a frame
  * on (until the next entry), for headless runs. Buttons are names joined by
  * '+': start select up down left right x square circle triangle l1 r1 l2 r2
  * l3 r3, or '-' for none. Example: PAD_SCRIPT=3700:start,3706:-,3900:x,3906:-
@@ -38,13 +43,25 @@ enum {
 int g_log_pad;
 static u32 area[2][4];          /* EE address per port/slot, 0 = not open */
 static u32 frame_no[2][4];
-static int pressure_mode, analog = 1, mode_lock;
+static int pressure_mode[2], analog[2] = { 1, 1 }, mode_lock[2];
 
 /* ---- host input ------------------------------------------------------------ */
 typedef struct { WORD buttons; BYTE lt, rt; SHORT lx, ly, rx, ry; } xi_gamepad;
 typedef struct { DWORD packet; xi_gamepad g; } xi_state;
 static DWORD (WINAPI *xi_get)(DWORD, xi_state *);
 static int xi_tried;
+static void xi_load(void);
+
+/* XInputGetState on an empty slot is slow (it looks for the device each call):
+   a slot that was empty is tried again only once a second */
+static int xi_read(DWORD idx, xi_state *x) {
+    static u64 retry_at[4];
+    if (!xi_tried) xi_load();
+    if (!xi_get || idx > 3 || g_frame < retry_at[idx]) return 0;
+    if (xi_get(idx, x) == 0) return 1;
+    retry_at[idx] = g_frame + 60;
+    return 0;
+}
 
 static void xi_load(void) {
     xi_tried = 1;
@@ -66,12 +83,13 @@ static const struct { const char *name; u16 bit; } bnames[] = {
 };
 
 typedef struct { u64 frame; u16 buttons; } script_ev;
-static script_ev script[4096];
-static int nscript = -1;
+static script_ev scripts[2][4096];
+static int nscripts[2] = { -1, -1 };
 
-static void script_load(void) {
-    nscript = 0;
-    const char *s = getenv("PAD_SCRIPT");
+static void script_load(int port) {
+    script_ev *script = scripts[port];
+    int nscript = 0;
+    const char *s = getenv(port ? "PAD2_SCRIPT" : "PAD_SCRIPT");
     while (s && *s && nscript < 4096) {
         char *e; u64 f = strtoull(s, &e, 10);
         if (*e != ':') break;
@@ -87,7 +105,8 @@ static void script_load(void) {
         script[nscript].frame = f; script[nscript].buttons = b; nscript++;
         if (*s == ',') s++;
     }
-    if (nscript) LOG("pad: %d scripted inputs\n", nscript);
+    nscripts[port] = nscript;
+    if (nscript) LOG("pad: %d scripted inputs for player %d\n", nscript, port + 1);
 }
 
 static u8 stick(int neg, int pos) { return neg && !pos ? 0x00 : pos && !neg ? 0xff : 0x80; }
@@ -97,10 +116,19 @@ static u8 axis(SHORT v, int flip) {
     return (u8)a;
 }
 
-static void read_host(pad_in *p) {
+static void gamepad_in(pad_in *p, const xi_state *x);
+
+/* one player's input; returns whether that player's pad is plugged in */
+static int read_host(int port, pad_in *p) {
     p->buttons = 0; p->lx = p->ly = p->rx = p->ry = 0x80;
-    if (nscript < 0) script_load();
-    for (int i = 0; i < nscript; i++) if (script[i].frame <= g_frame) p->buttons = script[i].buttons;
+    if (nscripts[port] < 0) script_load(port);
+    for (int i = 0; i < nscripts[port]; i++) if (scripts[port][i].frame <= g_frame) p->buttons = scripts[port][i].buttons;
+    xi_state x;
+    if (port == 1) {
+        int connected = nscripts[1] > 0;
+        if (g_cfg.pad2 && g_cfg.gamepad && xi_read(g_cfg.pad2 == 2 ? 0 : 1, &x)) { gamepad_in(p, &x); connected = 1; }
+        return connected;
+    }
 
     extern int gsgl_has_focus(void);
     if (gsgl_has_focus()) {
@@ -119,9 +147,13 @@ static void read_host(pad_in *p) {
 #undef K
     }
 
-    if (!xi_tried) xi_load();
-    xi_state x;
-    if (g_cfg.gamepad && xi_get && xi_get(0, &x) == 0) {
+    if (g_cfg.gamepad && g_cfg.pad2 != 2 && xi_read(0, &x)) gamepad_in(p, &x);
+    return 1;
+}
+
+static void gamepad_in(pad_in *p, const xi_state *xp) {
+    const xi_state x = *xp;
+    {
         WORD w = x.g.buttons;
         static const struct { WORD xb; u16 bit; } map[] = {
             { 0x0001, B_UP }, { 0x0002, B_DOWN }, { 0x0004, B_LEFT }, { 0x0008, B_RIGHT },
@@ -143,7 +175,7 @@ static void read_host(pad_in *p) {
 /* ---- the DMA'd frame ------------------------------------------------------- */
 static void put8(u32 a, u8 v) { mw8(a, v); }
 
-static void write_frame(int port, int slot, const pad_in *in) {
+static void write_frame(int port, int slot, const pad_in *in, int plugged) {
     u32 base = area[port][slot];
     if (!base) return;
     u32 n = ++frame_no[port][slot];
@@ -152,11 +184,11 @@ static void write_frame(int port, int slot, const pad_in *in) {
     mw32(f + 0x58, n);
     put8(f + 0x72, 1);                 /* currentTask: info ready */
     put8(f + 0x71, 0);                 /* reqState: complete */
-    if (port != 0 || slot != 0) {      /* nothing plugged in */
+    if (slot != 0 || !plugged) {       /* nothing plugged in */
         put8(f + 0x70, 0);
         return;
     }
-    u8 id = !analog ? 0x41 : pressure_mode ? 0x79 : 0x73;
+    u8 id = !analog[port] ? 0x41 : pressure_mode[port] ? 0x79 : 0x73;
     put8(f + 0x70, 6);                 /* stable */
     put8(f + 0x64, 2);                 /* modeConfig: mode info read */
     put8(f + 0x65, id);
@@ -164,13 +196,13 @@ static void write_frame(int port, int slot, const pad_in *in) {
     put8(f + 0x67, 1);
     mw16(f + 0x50, 4); mw16(f + 0x52, 7);     /* modeTable: digital, dualshock */
     put8(f + 0x68, 2);
-    put8(f + 0x69, analog ? 1 : 0);
+    put8(f + 0x69, analog[port] ? 1 : 0);
     put8(f + 0x6a, 2);                 /* two motors */
     put8(f + 0x30, 0); put8(f + 0x31, 1); put8(f + 0x32, 0); put8(f + 0x33, 1);       /* small: on/off */
     put8(f + 0x34, 0); put8(f + 0x35, 1); put8(f + 0x36, 1); put8(f + 0x37, 0x14);    /* large: 8-bit level */
     put8(f + 0x6b, 1);
     put8(f + 0x40, 0); put8(f + 0x41, 1); put8(f + 0x42, 0); put8(f + 0x43, 0);
-    put8(f + 0x6e, (u8)mode_lock);
+    put8(f + 0x6e, (u8)mode_lock[port]);
 
     u16 b = (u16)~in->buttons;
     u8 d[32]; memset(d, 0, sizeof d);
@@ -191,12 +223,15 @@ static void write_frame(int port, int slot, const pad_in *in) {
 }
 
 void pad_vsync(void) {
-    pad_in in;
-    read_host(&in);
-    static u16 last;
-    if (g_log_pad && in.buttons != last) LOG("pad: frame %llu buttons %04x\n", (unsigned long long)g_frame, in.buttons);
-    last = in.buttons;
-    for (int p = 0; p < 2; p++) for (int s = 0; s < 4; s++) write_frame(p, s, &in);
+    static u16 last[2]; static int was[2] = { -1, -1 };
+    for (int p = 0; p < 2; p++) {
+        pad_in in;
+        int plugged = read_host(p, &in);
+        if (g_log_pad && in.buttons != last[p]) LOG("pad: player %d frame %llu buttons %04x\n", p + 1, (unsigned long long)g_frame, in.buttons);
+        if (plugged != was[p] && (p || g_log_pad)) LOG("pad: player %d pad %s at frame %llu\n", p + 1, plugged ? "plugged in" : "unplugged", (unsigned long long)g_frame);
+        last[p] = in.buttons; was[p] = plugged;
+        for (int s = 0; s < 4; s++) write_frame(p, s, &in, plugged);
+    }
 }
 
 /* padman RPC: buf is the 128-byte request/reply in IOP RAM. Reply value at +12. */
@@ -206,10 +241,13 @@ void pad_rpc(u8 *buf) {
     switch (cmd) {
     case 0x01: area[port][slot] = w[4]; frame_no[port][slot] = 0; break;   /* open(port, slot, -, area) */
     case 0x05:                                                           /* setMainMode(port, slot, mode, lock) */
-        if (port == 0 && slot == 0) { analog = w[3] != 0; mode_lock = w[4] == 3; if (!analog) pressure_mode = 0; }
+        if (slot == 0) { analog[port] = w[3] != 0; mode_lock[port] = w[4] == 3; if (!analog[port]) pressure_mode[port] = 0; }
         break;
-    case 0x08: ret = pressure_mode ? 0x3ffff : 0; break;                 /* getButtonMask */
-    case 0x09: pressure_mode = (w[3] & 0x3ffff) != 0; break;             /* setButtonInfo */
+    case 0x08: ret = slot == 0 && pressure_mode[port] ? 0x3ffff : 0; break; /* getButtonMask */
+    case 0x09:                                                           /* setButtonInfo */
+        if (slot == 0) pressure_mode[port] = (w[3] & 0x3ffff) != 0;
+        else ret = 0;
+        break;
     case 0x0b: ret = 2; break;                                           /* getPortMax */
     case 0x0c: ret = 1; break;                                           /* getSlotMax */
     case 0x0d: area[port][slot] = 0; break;                              /* close */

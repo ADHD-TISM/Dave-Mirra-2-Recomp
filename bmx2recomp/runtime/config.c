@@ -8,7 +8,7 @@ int g_gs_thread_cfg = 1;   /* gsthread.c: 0 = graphics on the EE thread */
 
 bmx2_cfg g_cfg = {
     .scale = 0, .window_w = 0, .window_h = 0, .fullscreen = 0, .stretch = 0, .smooth = 1,
-    .frame_limit = 1, .vsync = 1, .gamepad = 1,
+    .frame_limit = 1, .vsync = 1, .gamepad = 1, .pad2 = 1,
     .keys = {
         [CFG_UP] = { VK_UP }, [CFG_DOWN] = { VK_DOWN }, [CFG_LEFT] = { VK_LEFT }, [CFG_RIGHT] = { VK_RIGHT },
         [CFG_START] = { VK_RETURN }, [CFG_SELECT] = { VK_BACK, VK_RSHIFT },
@@ -68,6 +68,7 @@ static void set(const char *k, char *v, int line) {
                                        if (!getenv("SPU_VOLUME")) { snprintf(e, sizeof e, "SPU_VOLUME=%d", n); _putenv(e); } }
     else if (!_stricmp(k, "gs_thread")) g_gs_thread_cfg = as_bool(v);
     else if (!_stricmp(k, "gamepad")) g_cfg.gamepad = as_bool(v);
+    else if (!_stricmp(k, "pad2")) g_cfg.pad2 = !_stricmp(v, "off") || !_stricmp(v, "0") ? 0 : !_stricmp(v, "gamepad1") ? 2 : 1;
     /* debug switches the runtime reads from the environment (once, lazily) */
     else if (!_stricmp(k, "async_tex_sync")) { if (as_bool(v)) _putenv("GS_ASYNC_TEX_SYNC=1"); }
     else if (!_stricmp(k, "exact_gs_sync")) {}   /* old key: exact is the default now */

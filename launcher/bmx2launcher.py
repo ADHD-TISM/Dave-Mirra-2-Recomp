@@ -821,6 +821,8 @@ SETTINGS = [
      "1 = the console's speed, 0 = as fast as the PC can go (for testing)"),
     ("gamepad", "Gameplay", "Use an Xbox-style gamepad", "bool", B01, "1",
      "1 = read the first XInput gamepad as the PS2 pad (A = cross, B = circle, X = square, Y = triangle)"),
+    ("pad2", "Gameplay", "Player 2 pad", "choice", ["gamepad2", "gamepad1", "off"], "gamepad2",
+     "Player 2 (Multiplayer): gamepad2 = second gamepad, gamepad1 = first gamepad (player 1 uses the keyboard), off"),
     ("scale", "Video", "Internal resolution", "choice", ["1", "2", "3", "4"], "2",
      "Internal 3D resolution: 1 = original PS2, 2-4 = sharper (more GPU work)"),
     ("window_size", "Video", "Window size", "combo", ["auto", "640x480", "960x720", "1280x960", "1600x1200",
