@@ -35,8 +35,8 @@ from concurrent.futures import ThreadPoolExecutor
 
 # The project's online home (GitHub "owner/name"). Empty while it is not published:
 # the launcher then uses the bmx2recomp folder next to it and Update says so.
-REPO = ""
-LAUNCHER_VERSION = "1"
+REPO = "ADHD-TISM/Dave-Mirra-2-Recomp"
+LAUNCHER_VERSION = "2"
 
 GAME_NAME = "Dave Mirra Freestyle BMX 2"
 GAME_SERIAL = "SLUS-20159"
