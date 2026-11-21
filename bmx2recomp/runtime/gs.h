@@ -46,6 +46,8 @@ typedef struct {            /* everything a batch shares; memcmp'd to merge */
     u32 ta0, ta1, aem;
     u32 wms, wmt, minu, maxu, minv, maxv;
     u32 mmag, mmin;
+    u32 mxl, lcm, mipl, mipk;   /* TEX1: max mip level, LOD method, L, K (K as signed 7.4 fixed) */
+    u32 miptbp[6], miptbw[6];   /* MIPTBP1/2: levels 1..6 (only up to mxl are filled) */
     u32 fge, fogcol;
     u32 scx0, scx1, scy0, scy1;
     u32 colclamp, dthe;

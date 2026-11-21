@@ -67,7 +67,8 @@ static void set(const char *k, char *v, int line) {
     else if (!_stricmp(k, "gs_thread")) g_gs_thread_cfg = as_bool(v);
     else if (!_stricmp(k, "gamepad")) g_cfg.gamepad = as_bool(v);
     /* debug switches the runtime reads from the environment (once, lazily) */
-    else if (!_stricmp(k, "exact_gs_sync")) { if (as_bool(v)) _putenv("GS_EXACT_SYNC=1"); }
+    else if (!_stricmp(k, "async_tex_sync")) { if (as_bool(v)) _putenv("GS_ASYNC_TEX_SYNC=1"); }
+    else if (!_stricmp(k, "exact_gs_sync")) {}   /* old key: exact is the default now */
     else if (!_stricmp(k, "vu_mode")) {
         if (!_stricmp(v, "interpreter")) _putenv("VU_INTERP=1");
         else if (!_stricmp(v, "check")) _putenv("VU_CHECK=1");

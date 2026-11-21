@@ -25,6 +25,7 @@
 #include "gs.h"
 #include "config.h"
 #include <x86intrin.h>
+#include <math.h>
 
 #ifndef APIENTRY
 #define APIENTRY
@@ -169,6 +170,7 @@ static GLuint prog, cprog, vao, vbo;
 static struct {
     GLint rtsize, half, yoff, tex, tme, fst, tfx, tcc, linear, rt24, aem, tsize, tmap, wrap, region, ta0;
     GLint atst, aref, afail_pass, fge, fogcol, abe, csel, pabe, fba, abd, sgn, fix;
+    GLint mip[7], mxl, mmin, lcm, mipl, mipk;
 } U;
 static GLint cu_dst, cu_src, cu_tex, cu_alpha1;
 
@@ -191,7 +193,8 @@ static const char *fs_src =
     "noperspective in vec4 v_col; noperspective in vec3 v_tex; noperspective in float v_fog; noperspective in float v_z;\n"
     "layout(location=0, index=0) out vec4 o_col;\n"
     "layout(location=0, index=1) out vec4 o_fac;\n"
-    "uniform sampler2D u_tex;\n"
+    "uniform sampler2D u_tex, u_mip1, u_mip2, u_mip3, u_mip4, u_mip5, u_mip6;\n"
+    "uniform int u_mxl, u_mmin, u_lcm, u_mipl; uniform float u_mipk;\n"
     "uniform int u_tme, u_fst, u_tfx, u_tcc, u_linear, u_rt24, u_aem;\n"
     "uniform vec2 u_tsize; uniform vec4 u_tmap; uniform ivec2 u_wrap; uniform ivec4 u_region; uniform float u_ta0;\n"
     "uniform int u_atst, u_aref, u_afail_pass, u_fge; uniform vec3 u_fogcol;\n"
@@ -202,12 +205,26 @@ static const char *fs_src =
     "  if (m == 2) return clamp(c, mn, mx);\n"
     "  return (c & mn) | mx;\n"
     "}\n"
-    "vec4 fetch(ivec2 c) {\n"
-    "  c.x = wrapc(c.x, u_wrap.x, u_region.x, u_region.y, int(u_tsize.x));\n"
-    "  c.y = wrapc(c.y, u_wrap.y, u_region.z, u_region.w, int(u_tsize.y));\n"
-    "  vec4 t = floor(texelFetch(u_tex, ivec2(vec2(c) * u_tmap.xy + u_tmap.zw), 0) * 255.0 + 0.5);\n"
-    "  if (u_rt24 == 1) t.a = (u_aem == 1 && t.r + t.g + t.b == 0.0) ? 0.0 : u_ta0;\n"
+    "vec4 fetchl(int l, ivec2 c) {\n"
+    "  ivec2 sz = max(ivec2(u_tsize) >> l, ivec2(1));\n"
+    "  ivec4 rg = (l == 0 || u_wrap.x == 3) ? u_region : (u_region >> l);\n"
+    "  c.x = wrapc(c.x, u_wrap.x, rg.x, rg.y, sz.x);\n"
+    "  c.y = wrapc(c.y, u_wrap.y, rg.z, rg.w, sz.y);\n"
+    "  vec4 t;\n"
+    "  if (l == 0) t = texelFetch(u_tex, ivec2(vec2(c) * u_tmap.xy + u_tmap.zw), 0);\n"
+    "  else if (l == 1) t = texelFetch(u_mip1, c, 0); else if (l == 2) t = texelFetch(u_mip2, c, 0);\n"
+    "  else if (l == 3) t = texelFetch(u_mip3, c, 0); else if (l == 4) t = texelFetch(u_mip4, c, 0);\n"
+    "  else if (l == 5) t = texelFetch(u_mip5, c, 0); else t = texelFetch(u_mip6, c, 0);\n"
+    "  t = floor(t * 255.0 + 0.5);\n"
+    "  if (u_rt24 == 1 && l == 0) t.a = (u_aem == 1 && t.r + t.g + t.b == 0.0) ? 0.0 : u_ta0;\n"
     "  return t;\n"
+    "}\n"
+    "vec4 fetch(ivec2 c) { return fetchl(0, c); }\n"
+    "vec4 samplel(int l, vec2 uv0, bool lin) {\n"
+    "  vec2 uv = uv0 / float(1 << l);\n"
+    "  if (!lin) return fetchl(l, ivec2(floor(uv)));\n"
+    "  vec2 p = uv - 0.5; ivec2 i = ivec2(floor(p)); vec2 f = p - floor(p);\n"
+    "  return floor(mix(mix(fetchl(l, i), fetchl(l, i + ivec2(1, 0)), f.x), mix(fetchl(l, i + ivec2(0, 1)), fetchl(l, i + ivec2(1, 1)), f.x), f.y));\n"
     "}\n"
     "bool atest(float a) {\n"
     "  int ia = int(a);\n"
@@ -221,10 +238,15 @@ static const char *fs_src =
     "  if (u_tme == 1) {\n"
     "    vec2 uv = u_fst == 1 ? v_tex.xy : v_tex.xy / v_tex.z * u_tsize;\n"
     "    vec4 t;\n"
-    "    if (u_linear == 0) t = fetch(ivec2(floor(uv)));\n"
+    "    float lod = u_lcm == 1 ? u_mipk : log2(1.0 / max(abs(u_fst == 1 ? 1.0 : v_tex.z), 1e-30)) * float(1 << u_mipl) + u_mipk;\n"
+    "    if (u_mxl == 0 || lod <= 0.0) t = samplel(0, uv, u_linear == 1);\n"
     "    else {\n"
-    "      vec2 p = uv - 0.5; ivec2 i = ivec2(floor(p)); vec2 f = p - floor(p);\n"
-    "      t = floor(mix(mix(fetch(i), fetch(i + ivec2(1, 0)), f.x), mix(fetch(i + ivec2(0, 1)), fetch(i + ivec2(1, 1)), f.x), f.y));\n"
+    "      bool inlin = u_mmin == 4 || u_mmin == 5, between = u_mmin == 3 || u_mmin == 5;\n"
+    "      lod = min(lod, float(u_mxl));\n"
+    "      if (between) {\n"
+    "        int l0 = int(floor(lod)); int l1 = min(l0 + 1, u_mxl); float f = lod - floor(lod);\n"
+    "        t = floor(mix(samplel(l0, uv, inlin), samplel(l1, uv, inlin), f));\n"
+    "      } else t = samplel(min(int(floor(lod + 0.5)), u_mxl), uv, inlin);\n"
     "    }\n"
     "    vec4 r;\n"
     "    if (u_tfx == 0) { r.rgb = floor(t.rgb * col.rgb / 128.0); r.a = u_tcc == 1 ? floor(t.a * col.a / 128.0) : col.a; }\n"
@@ -602,7 +624,13 @@ static u32 nv;
 static gs_draw_state cur;
 static int have;
 static GLuint fb_tex; static int fb_w, fb_h;   /* copy of a target that is drawn and sampled at once */
-static u64 n_batches, n_draw_verts, n_culled;
+static u64 n_batches, n_draw_verts, n_culled, n_mip_batches, n_mip_skip0;
+/* 1x1 black: level 0 of a mipmapped batch that never samples it */
+static GLuint dummy_tex(void) {
+    static GLuint t;
+    if (!t) { u32 z = 0; t = new_tex(1, 1, GL_RGBA8, GL_RGBA, GL_UNSIGNED_BYTE); glBindTexture(GL_TEXTURE_2D, t); glTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, 1, 1, GL_RGBA, GL_UNSIGNED_BYTE, &z); }
+    return t;
+}
 
 /* Uniforms of the draw program: set only when the value changes (the GL
  * driver was most of the frame time with ~25 glUniform calls per batch). */
@@ -659,6 +687,9 @@ void gsgl_flush(void) {
             n, st.prim, st.fbp, st.fbw, st.fpsm, st.fbmsk, st.tme, st.tbp, st.tbw, st.tpsm, 1u << st.tw, 1u << st.th, st.fst, st.tfx,
             st.abe, st.alpha_a, st.alpha_b, st.alpha_c, st.alpha_d, st.zbp, st.ztst, st.zmsk, st.scx0, st.scy0, st.scx1, st.scy1,
             vb[0].x, vb[0].y, vb[0].r, vb[0].g, vb[0].b, vb[0].a, vb[0].s, vb[0].t, vb[0].q);
+    if (g_log_gs > 1 && st.tme && st.mxl)
+        LOG("gs:   mip mxl %u mmin %u mmag %u lcm %u l %u k %03x  levels %x/%u %x/%u %x/%u %x/%u\n", st.mxl, st.mmin, st.mmag, st.lcm, st.mipl, st.mipk,
+            st.miptbp[0], st.miptbw[0], st.miptbp[1], st.miptbw[1], st.miptbp[2], st.miptbw[2], st.miptbp[3], st.miptbw[3]);
     if (g_log_gs > 2) for (u32 i = 0; i < n; i++)
         LOG("   v%u %.2f,%.2f z %.6g c %02x%02x%02x%02x stq %g,%g,%g\n", i, vb[i].x, vb[i].y, vb[i].z, vb[i].r, vb[i].g, vb[i].b, vb[i].a, vb[i].s, vb[i].t, vb[i].q);
     if (!is_color_psm(st.fpsm)) {
@@ -690,6 +721,27 @@ void gsgl_flush(void) {
     u64 tc0 = __rdtsc();
     /* texture */
     GLuint tex = 0; float tmx = 1, tmy = 1, tox = 0, toy = 0; int rt24 = 0;
+    /* Mipmapping (TEX1 MXL > 0, MMIN 2..5). The game uploads only the levels
+     * from the needed level of detail down (vif1_intc_handler 0x107668), so a
+     * distant object's TEX0 base (level 0) is often TBP 0. If no vertex can
+     * reach level 0 (LOD >= 1 everywhere: Q is linear in screen space, so the
+     * largest |Q| is at a vertex), level 0 is not decoded at all. */
+    GLuint miptex[7] = { 0 };
+    u32 mxl_use = st.tme && st.mxl && st.mmin >= 2 ? st.mxl : 0;
+    float mipk = (float)((st.mipk & 0x800) ? (int)st.mipk - 0x1000 : (int)st.mipk) / 16.0f;
+    int skip0 = 0;
+    if (mxl_use) {
+        float lodmin;
+        if (st.lcm || st.fst) lodmin = mipk;
+        else {
+            float qmax = 0;
+            for (u32 i = 0; i < n; i++) { float a = fabsf(vb[i].q); if (a > qmax) qmax = a; }
+            lodmin = qmax > 0 ? log2f(1.0f / qmax) * (float)(1u << st.mipl) + mipk : 1e9f;
+        }
+        skip0 = lodmin >= 1.0f;
+        if (skip0) n_mip_skip0++;
+        n_mip_batches++;
+    }
     if (st.tme) {
         u32 tyoff = 0;
         target *src = is_color_psm(st.tpsm) ? find_target(st.tbp, st.tbw, st.tpsm, &tyoff) : 0;
@@ -707,7 +759,14 @@ void gsgl_flush(void) {
                 glCopyTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, 0, 0, w, t->hmax * S); n_selfcopy++;
                 tex = fb_tex;
             }
-        } else tex = texture_from_memory(&st);
+        } else tex = skip0 ? dummy_tex() : texture_from_memory(&st);
+        /* GS mipmapping: levels 1..MXL from MIPTBP1/2, halving in size */
+        for (u32 k = 1; k <= mxl_use; k++) {
+            gs_draw_state m = st;
+            m.tbp = st.miptbp[k - 1]; m.tbw = st.miptbw[k - 1];
+            m.tw = st.tw > k ? st.tw - k : 0; m.th = st.th > k ? st.th - k : 0;
+            miptex[k] = texture_from_memory(&m);
+        }
     }
 
     ft_tex += __rdtsc() - tc0; tc0 = __rdtsc();
@@ -746,6 +805,11 @@ void gsgl_flush(void) {
     U1f(U.half, 0.5f / S);
     U1f(U.yoff, (float)yoff);
     U1i(U.tme, st.tme);
+    U1i(U.mxl, (int)mxl_use);
+    if (mxl_use) {
+        U1i(U.mmin, (int)st.mmin); U1i(U.lcm, (int)st.lcm); U1i(U.mipl, (int)st.mipl); U1f(U.mipk, mipk);
+        for (u32 k = 1; k <= mxl_use; k++) { glActiveTexture(GL_TEXTURE0 + k); glBindTexture(GL_TEXTURE_2D, miptex[k]); }
+    }
     glActiveTexture(GL_TEXTURE0);
     glBindTexture(GL_TEXTURE_2D, tex);
     if (st.tme) {
@@ -885,8 +949,12 @@ static void async_issue_all(void) {
 }
 
 static void sync_for_texture(u32 b0, u32 b1) {
-    static int mode = -1;   /* 0 async (default), 1 GS_EXACT_SYNC, 2 GS_SYNC_PER_FRAME (old synchronous approximation) */
-    if (mode < 0) mode = getenv("GS_EXACT_SYNC") ? 1 : getenv("GS_SYNC_PER_FRAME") ? 2 : 0;
+    /* 1 exact (default since mipmapping: the TBP 0 reads were level 0 of
+     * mipmapped textures that are never sampled, now not decoded at all);
+     * 0 GS_ASYNC_TEX_SYNC=1: write-back 2-4 frames late via PBO;
+     * 2 GS_SYNC_PER_FRAME=1: once per frame, synchronous */
+    static int mode = -1;
+    if (mode < 0) mode = getenv("GS_ASYNC_TEX_SYNC") ? 0 : getenv("GS_SYNC_PER_FRAME") ? 2 : 1;
     gsgl_flush();
     for (int i = 0; i < NT; i++) {
         target *t = &tg[i];
@@ -1066,6 +1134,7 @@ void gsgl_stats(void) {
         (unsigned long long)n_batches, (unsigned long long)n_draw_verts, (unsigned long long)n_targets_made,
         (unsigned long long)n_downloads, (unsigned long long)n_dl_rows, (unsigned long long)n_decodes, (unsigned long long)n_culled);
     LOG("gs: %llu texture reads used an earlier write-back, %llu async read-backs\n", (unsigned long long)n_sync_skipped, (unsigned long long)n_async_reads);
+    LOG("gs: %llu mipmapped batches, %llu of them never reach level 0 (not decoded)\n", (unsigned long long)n_mip_batches, (unsigned long long)n_mip_skip0);
     if (n_presents) LOG("gs: %llu presents, %llu gaps over 20 ms (%llu after frame 6600, longest %.1f ms there)\n",
         (unsigned long long)n_presents, (unsigned long long)n_present_gaps, (unsigned long long)n_present_gaps_late, present_gap_max);
     if (ft_from_cyc) {
@@ -1130,10 +1199,13 @@ int gsgl_init(int show_window, int scale) {
     UL(rtsize); UL(half); UL(yoff); UL(tex); UL(tme); UL(fst); UL(tfx); UL(tcc); UL(linear); UL(rt24); UL(aem);
     UL(tsize); UL(tmap); UL(wrap); UL(region); UL(ta0); UL(atst); UL(aref); UL(afail_pass); UL(fge); UL(fogcol);
     UL(abe); UL(csel); UL(pabe); UL(fba); UL(abd); UL(sgn); UL(fix);
+    UL(mxl); UL(mmin); UL(lcm); UL(mipl); UL(mipk);
 #undef UL
+    for (int k = 1; k <= 6; k++) { char nm[16]; snprintf(nm, sizeof nm, "u_mip%d", k); U.mip[k] = glGetUniformLocation(prog, nm); }
     cu_dst = glGetUniformLocation(cprog, "u_dst"); cu_src = glGetUniformLocation(cprog, "u_src");
     cu_tex = glGetUniformLocation(cprog, "u_tex"); cu_alpha1 = glGetUniformLocation(cprog, "u_alpha1");
     glUseProgram(prog); glUniform1i(U.tex, 0);
+    for (int k = 1; k <= 6; k++) glUniform1i(U.mip[k], k);   /* mip levels 1..6 on texture units 1..6 */
     glUseProgram(cprog); glUniform1i(cu_tex, 0);
 
     glGenVertexArrays(1, &vao);

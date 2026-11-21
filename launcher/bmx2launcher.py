@@ -774,8 +774,8 @@ SETTINGS = [
      "How the picture is enlarged to the window: smooth = blended, nearest = sharp pixels"),
     ("gs_thread", "Debug", "Graphics on its own thread", "bool", B01, "1",
      "1 = VIF1, VU1 and drawing run on a second CPU thread (smoother); 0 = all on one thread"),
-    ("exact_gs_sync", "Debug", "Exact GS memory sync (slow)", "bool", B01, "0",
-     "1 = copy GPU drawing back to GS memory exactly (slower; for checking texture problems)"),
+    ("async_tex_sync", "Debug", "Approximate texture write-back", "bool", B01, "0",
+     "1 = textures read from GPU drawing use a copy 2-4 frames old (faster, inexact); 0 = exact"),
     ("vu_mode", "Debug", "VU1 code", "choice", ["recompiled", "interpreter", "check"], "recompiled",
      "recompiled = fast; interpreter = run VU1 microcode in the interpreter; check = run both and compare (slow)"),
 ]

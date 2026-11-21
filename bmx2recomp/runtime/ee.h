@@ -50,12 +50,20 @@ static inline u8  mr8(u32 a)  { u8 *p = ee_ptr(a); return p ? *p : io_read8(a); 
 static inline u16 mr16(u32 a) { u8 *p = ee_ptr(a); u16 v; if (!p) return io_read16(a); memcpy(&v, p, 2); return v; }
 static inline u32 mr32(u32 a) { u8 *p = ee_ptr(a); u32 v; if (!p) return io_read32(a); memcpy(&v, p, 4); return v; }
 static inline u64 mr64(u32 a) { u8 *p = ee_ptr(a & ~7u); u64 v; if (!p) return io_read64(a & ~7u); memcpy(&v, p, 8); return v; }
-static inline void mw8(u32 a, u8 v)   { u8 *p = ee_ptr(a); if (p) *p = v; else io_write8(a, v); }
-static inline void mw16(u32 a, u16 v) { u8 *p = ee_ptr(a); if (p) memcpy(p, &v, 2); else io_write16(a, v); }
-static inline void mw32(u32 a, u32 v) { u8 *p = ee_ptr(a); if (p) memcpy(p, &v, 4); else io_write32(a, v); }
-static inline void mw64(u32 a, u64 v) { u8 *p = ee_ptr(a & ~7u); if (p) memcpy(p, &v, 8); else io_write64(a & ~7u, v); }
+#ifdef EE_WATCH
+/* debug build: EE_WATCH=addr[:len] logs every EE store into that range (main.c) */
+extern u32 ee_watch_lo, ee_watch_hi;
+void ee_watch_hit(u32 a, int n, u64 v);
+#define WATCH(a, n, v) do { u32 a_ = (a) & 0x1ffffff; if (a_ < ee_watch_hi && a_ + (n) > ee_watch_lo) ee_watch_hit(a_, (n), (u64)(v)); } while (0)
+#else
+#define WATCH(a, n, v) do {} while (0)
+#endif
+static inline void mw8(u32 a, u8 v)   { WATCH(a, 1, v); u8 *p = ee_ptr(a); if (p) *p = v; else io_write8(a, v); }
+static inline void mw16(u32 a, u16 v) { WATCH(a, 2, v); u8 *p = ee_ptr(a); if (p) memcpy(p, &v, 2); else io_write16(a, v); }
+static inline void mw32(u32 a, u32 v) { WATCH(a, 4, v); u8 *p = ee_ptr(a); if (p) memcpy(p, &v, 4); else io_write32(a, v); }
+static inline void mw64(u32 a, u64 v) { WATCH(a & ~7u, 8, v); u8 *p = ee_ptr(a & ~7u); if (p) memcpy(p, &v, 8); else io_write64(a & ~7u, v); }
 static inline void mrq(u32 a, int rt) { a &= ~15u; u8 *p = ee_ptr(a); if (p) memcpy(&ee.r[rt], p, 16); else io_read128(a, &ee.r[rt]); }
-static inline void mwq(u32 a, int rt) { a &= ~15u; u8 *p = ee_ptr(a); if (p) memcpy(p, &ee.r[rt], 16); else io_write128(a, &ee.r[rt]); }
+static inline void mwq(u32 a, int rt) { a &= ~15u; WATCH(a, 16, ee.r[rt].d[0]); u8 *p = ee_ptr(a); if (p) memcpy(p, &ee.r[rt], 16); else io_write128(a, &ee.r[rt]); }
 
 static inline u32 mlwl(u32 a, u32 rt) {
     u32 sh = (a & 3) * 8, w = mr32(a & ~3u);

@@ -18,7 +18,7 @@ enum {
     PRIM = 0x00, RGBAQ = 0x01, ST = 0x02, UV = 0x03, XYZF2 = 0x04, XYZ2 = 0x05, TEX0_1 = 0x06, TEX0_2 = 0x07,
     CLAMP_1 = 0x08, CLAMP_2 = 0x09, FOG = 0x0a, XYZF3 = 0x0c, XYZ3 = 0x0d, TEX1_1 = 0x14, TEX1_2 = 0x15,
     TEX2_1 = 0x16, TEX2_2 = 0x17, XYOFFSET_1 = 0x18, XYOFFSET_2 = 0x19, PRMODECONT = 0x1a, PRMODE = 0x1b,
-    TEXCLUT = 0x1c, SCANMSK = 0x22, TEXA = 0x3b, FOGCOL = 0x3d, TEXFLUSH = 0x3f, SCISSOR_1 = 0x40,
+    TEXCLUT = 0x1c, SCANMSK = 0x22, MIPTBP1_1 = 0x34, MIPTBP1_2 = 0x35, MIPTBP2_1 = 0x36, MIPTBP2_2 = 0x37, TEXA = 0x3b, FOGCOL = 0x3d, TEXFLUSH = 0x3f, SCISSOR_1 = 0x40,
     SCISSOR_2 = 0x41, ALPHA_1 = 0x42, ALPHA_2 = 0x43, DIMX = 0x44, DTHE = 0x45, COLCLAMP = 0x46,
     TEST_1 = 0x47, TEST_2 = 0x48, PABE = 0x49, FBA_1 = 0x4a, FBA_2 = 0x4b, FRAME_1 = 0x4c, FRAME_2 = 0x4d,
     ZBUF_1 = 0x4e, ZBUF_2 = 0x4f, BITBLTBUF = 0x50, TRXPOS = 0x51, TRXREG = 0x52, TRXDIR = 0x53,
@@ -233,6 +233,15 @@ static void build_state(gs_draw_state *st, int cls, u32 a) {
         st->minu = F(clamp, 4, 10); st->maxu = F(clamp, 14, 10); st->minv = F(clamp, 24, 10); st->maxv = F(clamp, 34, 10);
         st->mmag = F(tex1, 5, 1);
         st->mmin = F(tex1, 6, 3);
+        st->lcm = F(tex1, 0, 1); st->mxl = F(tex1, 2, 3); st->mipl = F(tex1, 19, 2); st->mipk = F(tex1, 32, 12);
+        if (st->mxl > 6) st->mxl = 6;
+        if (st->mxl && st->mmin >= 2) {          /* mipmapping: MIPTBP1 (levels 1-3) and MIPTBP2 (4-6) */
+            u64 m1 = R[MIPTBP1_1 + c], m2 = R[MIPTBP2_1 + c];
+            for (u32 k = 0; k < st->mxl; k++) {
+                u64 m = k < 3 ? m1 : m2; u32 sh = (k % 3) * 20;
+                st->miptbp[k] = F(m, sh, 14); st->miptbw[k] = F(m, sh + 14, 6);
+            }
+        }
     }
     st->fge = (a >> 5) & 1;
     if (st->fge) st->fogcol = (u32)R[FOGCOL] & 0xffffff;

@@ -70,6 +70,31 @@ static void load_elf(const char *path) {
     free(d);
 }
 
+#ifdef EE_WATCH
+u32 ee_watch_lo = 0xffffffffu, ee_watch_hi;
+static int watch_init;
+void ee_watch_hit(u32 a, int n, u64 v) {
+    static int hits;
+    if (hits++ > 400) return;
+#ifdef EE_TRACE
+    extern u32 ee_trace_buf[1 << 22]; extern u32 ee_trace_pos;
+    LOG("watch: frame %llu write%d %08x = %llx  (fn %08x < %08x < %08x)\n", (unsigned long long)g_frame, n * 8, a, (unsigned long long)v,
+        ee_trace_buf[(ee_trace_pos - 1) & 0x3fffff], ee_trace_buf[(ee_trace_pos - 2) & 0x3fffff], ee_trace_buf[(ee_trace_pos - 3) & 0x3fffff]);
+#else
+    LOG("watch: frame %llu write%d %08x = %llx  ra %08x\n", (unsigned long long)g_frame, n * 8, a, (unsigned long long)v, GW(31));
+#endif
+}
+static void watch_setup(void) {
+    const char *e = getenv("EE_WATCH");
+    if (watch_init++ || !e) return;
+    char *c; u32 lo = (u32)strtoul(e, &c, 16), len = *c == ':' ? (u32)strtoul(c + 1, 0, 16) : 8;
+    ee_watch_lo = lo & 0x1ffffff; ee_watch_hi = ee_watch_lo + len;
+    LOG("watch: EE stores to %08x..%08x\n", ee_watch_lo, ee_watch_hi);
+}
+#else
+static void watch_setup(void) {}
+#endif
+
 #ifdef EE_TRACE
 u32 ee_trace_buf[1 << 22]; u32 ee_trace_pos;
 static void trace_dump(void) {
@@ -129,6 +154,7 @@ int main(int argc, char **argv) {
     setvbuf(stderr, NULL, _IONBF, 0);
     atexit(on_exit_report);
     { void prof_init(void); prof_init(); }
+    watch_setup();
     if (!SetCurrentDirectoryA(disc)) { LOG("cannot enter disc folder %s\n", disc); return 1; }
     config_load("bmx2.ini");
     if (g_cfg.scale && !scale_given) gs_scale = g_cfg.scale;

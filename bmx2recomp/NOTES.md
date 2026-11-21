@@ -194,7 +194,7 @@ instruction pairs, ~760 VU1 runs, ~280 GL batches, ~18k prims.
      scissor are dropped before texture lookup, and texture decodes reuse a
      write-back from earlier in the same frame (`sync_for_texture`; exact
      with `GS_EXACT_SYNC=1`). That last one is an approximation made for the
-     TBP 0 textures (Next step 2): they sample the buffer being drawn.
+     TBP 0 textures (since explained: mipmapping, see "Mipmapping")
   4. Frame pacer: no `timeBeginPeriod(1)` (Sleep overslept) and a late frame
      reset the schedule. Real time was 53-57 fps, now 59.9.
 - GL calls themselves were ~2% (uniforms are cached now and vertices go to a
@@ -358,6 +358,36 @@ On a fresh card only Woodward Camp is open; the other 5 levels (Trainyards,
 Swamp Trails, Commercial District, Galloon Water Park, Hwy 47 Cloverleaf)
 say "play more to unlock" and were not crawled.
 
+## Mipmapping, and the TBP 0 textures explained (2026-11-20)
+The TBP 0 textures were not a bug in the game or in texture upload. The
+VIF1 interrupt handler (vif1_intc_handler 0x107668) allocates VRAM and
+uploads a texture's mip levels lazily, from the level of detail the draw
+asks for (VIF1_CODE & 0xf) down; for distant objects level 0 is never
+uploaded, so TEX0's TBP (level 0) stays 0, while MIPTBP1/2 hold the real
+levels. All 299 such batches in a sampled frame: MXL 2, MMIN 5 (trilinear),
+LCM 0, L 0, K -4.25. The renderer had no mipmapping and always sampled level
+0, i.e. frame buffer 0. Found with a debug write watch (see below) on the
+texture object (TEX0 at +1304, level records of 160 bytes from +16, VRAM
+address at +8 of each; allocator fn_00106ea8 state at 0x25cd20; level free
+fn_00107278 on level load).
+- gs.c build_state now reads TEX1 MXL/LCM/L/K and MIPTBP1/2 (regs 0x34-0x37).
+- gs_gl.c: the fragment shader computes the GS LOD per pixel
+  ((log2(1/|Q|) << L) + K, or K with LCM=1), clamps to MXL and samples by
+  MMIN (2..5 = X_MIPMAP_Y: X within a level, Y between). Levels 1..6 are
+  decoded from memory onto texture units 1..6. A batch whose vertices all have
+  LOD >= 1 does not decode level 0 at all (Q is linear in screen space, so the
+  largest |Q| is at a vertex).
+- Result: texture decodes on the route 55k -> 4-6k, read-backs ~20/frame ->
+  275 page rows per run, so texture write-back is exact again by default.
+  GS_ASYNC_TEX_SYNC=1 (launcher Debug "Approximate texture write-back") keeps
+  the 2-4 frame old PBO variant; GS_SYNC_PER_FRAME=1 the once-per-frame one.
+  The old `exact_gs_sync` ini key does nothing now. Real time in the level:
+  33 frames shown twice (26 with the approximation), no underruns.
+- Debug write watch: build with `-DEE_WATCH -DEE_TRACE` (e.g. -O1 into a
+  scratch obj dir, ~75 s) and run with `EE_WATCH=<hex addr>[:hex len]`; each
+  EE store into the range logs frame, value and the last 3 function entries
+  (main.c ee_watch_hit). Use GS_THREAD=0 with it.
+
 ## Not written yet
 In the GS: see "Not done" above. In audio: reverb, volume sweeps, noise.
 
@@ -440,15 +470,11 @@ mode. Checked on the intro movie: the letterbox edge row alternated
 (Sleep-based, swap interval 0) was not measured and may add judder on
 high-refresh monitors.
 
-## Next step (recommended, 2026-11-19, after the sixth session)
-1. Play it in the window (real time now holds 60 in Woodward Camp) and check
-   the level against a reference picture of the real game.
-2. Find out why the game gives some textures TBP 0 (inside frame buffer 0):
-   the TEX0 values are built that way in EE RAM (657 copies), the game's
-   printf says nothing. Likely a texture-manager step that fails here. Then
-   the once-per-frame write-back approximation can go (see Performance).
-3. Settle the movie brightness question (see GS section).
-4. Audio (after the eighth session, user confirmed it works): reverb and
-   volume sweeps (spu2.c), and check effect/music balance against the game.
-   The launcher now lists ZAUDIO.IRX in IOP_MODULES; a launcher build with
-   it has not been run.
+## Next step (recommended, 2026-11-20)
+1. Playtest further (the user is unlocking levels); add missing code from
+   any message box. The 5 levels besides Woodward Camp are untested.
+2. Settle the movie brightness question (see GS section).
+3. Menus/movies still show ~400 frames twice per run (gaps over 20 ms);
+   not looked at.
+4. Audio: the game uses no reverb or volume sweeps (no libsd effect calls,
+   0 sweep-mode reads), so spu2.c covers what it uses.
