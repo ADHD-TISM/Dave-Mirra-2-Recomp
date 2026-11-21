@@ -684,6 +684,18 @@ same subject size, more scene at both sides, nothing missing at the edges.
 The 2D HUD and menus are stretched (not corrected). Changing recomp_ee.py
 changes the launcher's regen key, so installs regenerate gen/ once.
 
+## Anti-aliasing: area-filter present (2026-11-21)
+MSAA was not added: the shadow volumes count layers with exact per-pixel
+wrap (COLCLAMP 0 + FBMSK merge), which a multisample resolve would average,
+and every target is also sampled as a texture and read back to GS memory.
+Instead the present pass (smooth filter) now averages every source texel a
+window pixel covers (pfs_src in gs_gl.c: footprint from derivatives, up to
+4x4 bilinear taps), so scale 2-4 is real supersampling; enlarging is one
+bilinear tap as before. Checked at scale 4 in a 640x480 window: smoother
+edges (A/B with GS_PRESENT_BILINEAR=1). GS_SHOT_WINDOW=1 also saves the
+presented window with GS_SHOT. Real time at scale 4 + widescreen: worst frame
+17.2 ms, 0 underruns.
+
 ## Next step (recommended, 2026-11-21)
 1. Playtest further; add missing code from any message box. Every level now
    loads and rides in scripted crawls (see "Levels and cheats").

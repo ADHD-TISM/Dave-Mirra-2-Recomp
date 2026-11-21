@@ -684,6 +684,25 @@ void gsgl_draw(const gs_draw_state *st, const gs_vertex *v, u32 n) {
  * (new mod 256 or clamped) & ~FBMSK | old & FBMSK. */
 static GLuint wrap_tex, wrap_fbo, old_tex, wprog; static int wrap_w, wrap_h, old_w, old_h;
 static GLint wu_dst, wu_src, wu_tex, wu_old, wu_wrap, wu_mask; static u64 n_wrap, n_bitmask;
+/* Present with an area filter: each window pixel averages the source texels it
+ * covers (up to 4x4 bilinear taps = 8x8 texels), so a picture rendered at
+ * scale 2-4 is properly supersampled instead of reduced by one bilinear tap.
+ * When the picture is enlarged it is one bilinear tap, as before. */
+static GLuint pprog; static GLint pu_dst, pu_src, pu_tex;
+static const char *pfs_src =
+    "#version 330 core\n"
+    "uniform sampler2D u_tex; in vec2 v_uv; out vec4 o;\n"
+    "void main() {\n"
+    "  vec2 ts = vec2(textureSize(u_tex, 0));\n"
+    "  vec2 fp = max(abs(vec2(dFdx(v_uv.x), dFdy(v_uv.y))), abs(vec2(dFdy(v_uv.x), dFdx(v_uv.y)))) * ts;\n"
+    "  ivec2 n = ivec2(clamp(ceil(fp / 2.0), vec2(1.0), vec2(4.0)));\n"
+    "  vec2 st = fp / ts / vec2(n);\n"
+    "  vec2 base = v_uv - 0.5 * fp / ts + 0.5 * st;\n"
+    "  if (n == ivec2(1)) base = v_uv;\n"
+    "  vec3 acc = vec3(0.0);\n"
+    "  for (int y = 0; y < n.y; y++) for (int x = 0; x < n.x; x++) acc += texture(u_tex, base + st * vec2(x, y)).rgb;\n"
+    "  o = vec4(acc / float(n.x * n.y), 1.0);\n"
+    "}\n";
 static const char *wfs_src =
     "#version 330 core\n"
     "uniform sampler2D u_tex, u_old; uniform int u_wrap; uniform uvec4 u_mask; in vec2 v_uv; out vec4 o;\n"
@@ -1163,13 +1182,30 @@ static void present_rect_(u32 fbp, u32 fbw, u32 psm, u32 dbx, u32 dby, u32 w, u3
         glBindTexture(GL_TEXTURE_2D, src);
         glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, g_cfg.smooth ? GL_LINEAR : GL_NEAREST);
         glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, g_cfg.smooth ? GL_LINEAR : GL_NEAREST);
-        glUniform4f(cu_dst, -1, 1, 1, -1);           /* GS row 0 at the top */
-        glUniform4f(cu_src, u0, v0, u1, v1);
-        glUniform1i(cu_alpha1, 1);
+        static int bil = -1; if (bil < 0) bil = getenv("GS_PRESENT_BILINEAR") != 0;   /* old filter, for comparison */
+        if (g_cfg.smooth && pprog && !bil) {          /* area filter (supersampling at scale 2-4) */
+            glUseProgram(pprog);
+            glUniform4f(pu_dst, -1, 1, 1, -1);
+            glUniform4f(pu_src, u0, v0, u1, v1);
+        } else {
+            glUniform4f(cu_dst, -1, 1, 1, -1);       /* GS row 0 at the top */
+            glUniform4f(cu_src, u0, v0, u1, v1);
+            glUniform1i(cu_alpha1, 1);
+        }
         glBindVertexArray(vao);
         glDrawArrays(GL_TRIANGLE_STRIP, 0, 4);
         glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
         glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+    }
+    {   /* GS_SHOT_WINDOW=1: with GS_SHOT, also save the presented window (debugging the present filter) */
+        static int ww = -1; if (ww < 0) ww = getenv("GS_SHOT_WINDOW") != 0;
+        if (ww && shot && cw > 0 && ch > 0) {
+            u32 *pix = malloc((size_t)cw * ch * 4), *flip = malloc((size_t)cw * ch * 4);
+            glReadPixels(0, 0, cw, ch, GL_RGBA, GL_UNSIGNED_BYTE, pix);
+            for (int y = 0; y < ch; y++) memcpy(flip + (size_t)y * cw, pix + (size_t)(ch - 1 - y) * cw, (size_t)cw * 4);
+            shot_frame += 2; write_shot(flip, (u32)cw, (u32)ch); shot_frame -= 2;
+            free(pix); free(flip);
+        }
     }
     if (frames_since_check++ % 120 == 0) choose_vsync();
     LARGE_INTEGER t0, t1, fq; QueryPerformanceCounter(&t0);
@@ -1304,6 +1340,11 @@ int gsgl_init(int show_window, int scale) {
     glUseProgram(prog); glUniform1i(U.tex, 0);
     for (int k = 1; k <= 6; k++) glUniform1i(U.mip[k], k);   /* mip levels 1..6 on texture units 1..6 */
     glUseProgram(cprog); glUniform1i(cu_tex, 0);
+    if ((pprog = link(cvs_src, pfs_src))) {
+        pu_dst = glGetUniformLocation(pprog, "u_dst"); pu_src = glGetUniformLocation(pprog, "u_src");
+        pu_tex = glGetUniformLocation(pprog, "u_tex");
+        glUseProgram(pprog); glUniform1i(pu_tex, 0);
+    } else LOG("gs: area-filter present shader failed; presenting with one bilinear tap\n");
     if ((wprog = link(cvs_src, wfs_src))) {
         wu_dst = glGetUniformLocation(wprog, "u_dst"); wu_src = glGetUniformLocation(wprog, "u_src");
         wu_tex = glGetUniformLocation(wprog, "u_tex");

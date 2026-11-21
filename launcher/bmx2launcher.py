@@ -826,7 +826,7 @@ SETTINGS = [
     ("pad2", "Gameplay", "Player 2 pad", "choice", ["gamepad2", "gamepad1", "off"], "gamepad2",
      "Player 2 (Multiplayer): gamepad2 = second gamepad, gamepad1 = first gamepad (player 1 uses the keyboard), off. Needs gamepads on"),
     ("scale", "Video", "Internal resolution", "choice", ["1", "2", "3", "4"], "2",
-     "Internal 3D resolution: 1 = original PS2, 2-4 = sharper (more GPU work)"),
+     "Internal 3D resolution: 1 = original PS2, 2-4 = sharper, with smoother edges (supersampled with the smooth filter; more GPU work)"),
     ("window_size", "Video", "Window size", "combo", ["auto", "640x480", "960x720", "1280x960", "1600x1200",
                                                       "1280x720", "1920x1080"], "auto",
      "Window size in pixels (WxH). auto = 1280x960, made smaller if the screen is"),
