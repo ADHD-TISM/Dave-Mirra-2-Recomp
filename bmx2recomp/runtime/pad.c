@@ -284,8 +284,19 @@ void pad_vsync(void) {
         for (int s = 0; s < 4; s++) write_frame(p, s, &in, plugged);
     }
     {   /* vibration (bmx2.ini rumble = 0 turns it off) */
-        static int hooked;
-        if (!hooked) { hooked = 1; atexit(rumble_stop_all); }
+        static int hooked; static u64 test_at;
+        if (!hooked) {
+            hooked = 1; atexit(rumble_stop_all);
+            const char *e = getenv("PAD_RUMBLE_TEST");   /* debug: frame to call the game's vibrate fn */
+            if (e) test_at = strtoull(e, 0, 10);
+        }
+        if (test_at && g_frame == test_at) {   /* fn 16bb80(player 0, large motor, 255) */
+            ee_state save = ee;
+            GD(4) = 0; GD(5) = 1; GD(6) = 255; GD(29) -= 0x1000;
+            LOG("pad: rumble test call at frame %llu\n", (unsigned long long)g_frame);
+            ee_call(0x0016bb80);
+            ee = save;
+        }
         u16 v[4] = { 0, 0, 0, 0 };
         for (int p = 0; p < 2; p++) {
             int idx = player_slot(p);

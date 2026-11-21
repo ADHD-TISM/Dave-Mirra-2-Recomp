@@ -668,6 +668,18 @@ fn 16bb80 checks the Vibration option bit (0x21c41c + 17 * player) and a
 global block flag (gp-3568 = 0x25ba80).
 Debug aid: EE_TRACE builds take EE_COUNT=addr[,addr..] (up to 8) and print
 how often those functions were entered (direct calls only, not tail jumps).
+When the game vibrates (2026-11-21, traced): fn 1907f8 runs the rider's
+per-state handler from table 0x241e64 (index = state byte at rider+4080);
+states 4 and 6 (grinding) run fn 19d700, which calls fn 16bb80(player, small
+motor, 200) while rider+4312 (speed) > 0.03 and rider+352 bit 0 is clear.
+fn 19ea48 (surface effect, jump table 0x24f440) calls it for surface id 12
+only (large motor, strength speed * 1.7, at most 64). fn 1af550 buzzes once
+when Vibration is switched on in the Controller menu. Nothing vibrates on
+crashes, landings or plain riding. In the scripted ride the rider asked for
+state 4 143 times (triangle presses), but enter fn 1941a8 refused each (no
+rail), so 19d700 never ran. PAD_RUMBLE_TEST=<frame> calls fn 16bb80(0, 1,
+255) at that frame: verified end to end (act blocks DMA'd every frame, large
+motor 255 fading to 0 over 31 frames, then off).
 
 ## Widescreen (2026-11-21)
 fn 100ad0(width, height) is the screen setup: it stores x = 1.0 and y =
