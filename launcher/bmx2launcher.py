@@ -189,7 +189,8 @@ def safe_extract(zpath, dest, strip=0, skip=(), only=None):
     base = os.path.realpath(dest)
     os.makedirs(base, exist_ok=True)
     if only is not None:
-        assert strip >= 1 and only.endswith("/"), "only= needs strip >= 1 and a folder name ending in /"
+        if strip < 1 or not only.endswith("/"):      # a real check, not an assert: kept under python -O
+            raise ValueError("only= needs strip >= 1 and a folder name ending in /")
     try:
         with zipfile.ZipFile(zpath) as z:
             _extract_members(z, base, strip, skip, only)
@@ -385,7 +386,6 @@ def install_project(P, C, log, force=False):
     z = fetch_project_zip(P, tag, log)
     tmp = P.project + ".tmp"
     shutil.rmtree(tmp, ignore_errors=True)
-    shutil.rmtree(P.project + ".unpack", ignore_errors=True)   # left by launcher 3 before this fix
     try:
         # the repository archive is <repo>-<ref>/bmx2recomp/... next to launcher/: unpack just that folder
         safe_extract(z, tmp, strip=2, only="bmx2recomp/")

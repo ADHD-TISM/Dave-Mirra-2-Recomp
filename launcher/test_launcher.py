@@ -15,6 +15,21 @@ bl = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(bl)
 
 
+def check(cond, what):
+    """assert that survives python -O"""
+    if not cond:
+        raise AssertionError(what)
+
+
+def expect_fail(fn, text):
+    try:
+        fn()
+    except bl.Fail as e:
+        check(text in str(e), "Fail text %r lacks %r" % (str(e), text))
+    else:
+        raise AssertionError("no Fail (wanted %r)" % text)
+
+
 def files_under(d):
     return sorted(os.path.relpath(os.path.join(r, f), d).replace(os.sep, "/") for r, _, fs in os.walk(d) for f in fs)
 
@@ -31,19 +46,14 @@ def test_only_takes_the_project_folder(d):
                  "repo-v1/bmx2recomp/tools/recomp_ee.py", "repo-v1/bmx2recompX/evil.txt"])
     out = os.path.join(d, "out")
     bl.safe_extract(z, out, strip=2, only="bmx2recomp/")
-    assert files_under(out) == ["build.sh", "tools/recomp_ee.py"], files_under(out)
+    check(files_under(out) == ["build.sh", "tools/recomp_ee.py"], files_under(out))
 
 
 def test_damaged_zip_is_a_clear_error(d):
     bad = os.path.join(d, "bad.zip")
     with open(bad, "wb") as f:
         f.write(b"PK\x03\x04 cut off")
-    try:
-        bl.safe_extract(bad, os.path.join(d, "o"))
-    except bl.Fail as e:
-        assert "damaged" in str(e)
-    else:
-        raise AssertionError("no Fail for a damaged zip")
+    expect_fail(lambda: bl.safe_extract(bad, os.path.join(d, "o")), "damaged")
 
 
 def test_bad_crc_is_a_clear_error(d):
@@ -53,12 +63,7 @@ def test_bad_crc_is_a_clear_error(d):
     data = bytearray(open(z, "rb").read())
     data[data.index(b"hello world")] ^= 0xff          # corrupt the stored data, keep the index
     open(z, "wb").write(bytes(data))
-    try:
-        bl.safe_extract(z, os.path.join(d, "o2"), strip=1)
-    except bl.Fail as e:
-        assert "damaged" in str(e)
-    else:
-        raise AssertionError("no Fail for a bad CRC")
+    expect_fail(lambda: bl.safe_extract(z, os.path.join(d, "o2"), strip=1), "damaged")
 
 
 def test_replace_dir_swaps_and_cleans_up(d):
@@ -66,15 +71,83 @@ def test_replace_dir_swaps_and_cleans_up(d):
     os.makedirs(final); open(os.path.join(final, "old.txt"), "w").close()
     os.makedirs(tmp); open(os.path.join(tmp, "new.txt"), "w").close()
     bl.replace_dir(tmp, final)
-    assert os.listdir(final) == ["new.txt"]
-    assert not os.path.exists(tmp) and not os.path.exists(final + ".old")
+    check(os.listdir(final) == ["new.txt"], os.listdir(final))
+    check(not os.path.exists(tmp) and not os.path.exists(final + ".old"), "tmp or .old left")
 
 
 def test_replace_dir_into_missing_final(d):
     final, tmp = os.path.join(d, "f2"), os.path.join(d, "t2")
     os.makedirs(tmp); open(os.path.join(tmp, "a"), "w").close()
     bl.replace_dir(tmp, final)
-    assert os.listdir(final) == ["a"]
+    check(os.listdir(final) == ["a"], os.listdir(final))
+
+
+def test_replace_dir_rolls_back_when_the_swap_fails(d):
+    final, tmp = os.path.join(d, "final"), os.path.join(d, "tmp")
+    os.makedirs(final); open(os.path.join(final, "old.txt"), "w").close()
+    os.makedirs(tmp); open(os.path.join(tmp, "new.txt"), "w").close()
+    real = bl.rename_dir
+    def failing(src, dst):
+        if src == tmp:
+            raise PermissionError("simulated: tmp is locked")
+        real(src, dst)
+    bl.rename_dir = failing
+    try:
+        bl.replace_dir(tmp, final)
+    except PermissionError:
+        pass
+    else:
+        raise AssertionError("the simulated failure did not surface")
+    finally:
+        bl.rename_dir = real
+    check(os.listdir(final) == ["old.txt"], "old folder not put back: %r" % os.listdir(final))
+    check(not os.path.exists(final + ".old"), ".old left")
+
+
+def test_replace_dir_no_restore_without_a_move(d):
+    final, tmp = os.path.join(d, "final"), os.path.join(d, "tmp")
+    os.makedirs(tmp)
+    real = bl.rename_dir
+    bl.rename_dir = lambda src, dst: (_ for _ in ()).throw(PermissionError("simulated"))
+    try:
+        try:
+            bl.replace_dir(tmp, final)
+        except PermissionError:
+            pass
+    finally:
+        bl.rename_dir = real
+    check(not os.path.exists(final), "a folder appeared although none was moved aside")
+
+
+def test_replace_dir_refuses_a_stuck_old_folder(d):
+    final, tmp = os.path.join(d, "final"), os.path.join(d, "tmp")
+    os.makedirs(final); open(os.path.join(final, "keep.txt"), "w").close()
+    os.makedirs(tmp)
+    os.makedirs(final + ".old")
+    held = open(os.path.join(final + ".old", "locked.txt"), "w")   # an open file: Windows cannot delete it
+    try:
+        expect_fail(lambda: bl.replace_dir(tmp, final), "left from an earlier update")
+    finally:
+        held.close()
+    check(os.listdir(final) == ["keep.txt"], "final changed: %r" % os.listdir(final))
+
+
+def test_unsafe_path_is_refused(d):
+    z = os.path.join(d, "evil.zip")
+    make_zip(z, ["top/../../escape.txt"])
+    expect_fail(lambda: bl.safe_extract(z, os.path.join(d, "o"), strip=1), "unsafe path")
+    check(not os.path.exists(os.path.join(os.path.dirname(d), "escape.txt")), "file escaped")
+
+
+def test_only_needs_strip_and_slash(d):
+    z = os.path.join(d, "a.zip")
+    make_zip(z, ["top/bmx2recomp/a"])
+    for kw in (dict(strip=0, only="bmx2recomp/"), dict(strip=2, only="bmx2recomp")):
+        try:
+            bl.safe_extract(z, os.path.join(d, "o"), **kw)
+        except ValueError:
+            continue
+        raise AssertionError("no ValueError for %r" % kw)
 
 
 def main():
