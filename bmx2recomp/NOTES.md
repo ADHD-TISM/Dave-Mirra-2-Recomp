@@ -365,6 +365,18 @@ On a fresh card only Woodward Camp is open; the other 5 levels (Trainyards,
 Swamp Trails, Commercial District, Galloon Water Park, Hwy 47 Cloverleaf)
 say "play more to unlock" and were not crawled.
 
+## Menu-mode crawls (2026-11-21)
+Main menu order: ProQuest, Session, Freeride, Park Editor, Options, Cool
+Stuff, Multiplayer (greyed: needs a second pad; pad.c reports port 1 as
+empty). Crawls of 14000 turbo frames each (boot, down N, X a few times, then
+random riding or menu presses), run from separate folders: no missing code.
+- ProQuest (Woodward Camp): instructions, riding, pause menu, records.
+- Session: riding, pause menu.
+- Options: controller setup, Save Game ("SAVE COMPLETE"), overwrite prompt.
+- Cool Stuff: level records, movie list (a movie plays), Load Replay slots.
+The only odd log line in every run: "unhandled syscall 0x6b" once at boot
+(pc 001de374), harmless so far.
+
 ## Mipmapping, and the TBP 0 textures explained (2026-11-20)
 The TBP 0 textures were not a bug in the game or in texture upload. The
 VIF1 interrupt handler (vif1_intc_handler 0x107668) allocates VRAM and
