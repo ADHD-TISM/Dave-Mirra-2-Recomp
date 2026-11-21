@@ -559,6 +559,20 @@ e.g. the game's save folder (4 files, 60 KB) leaves 7936. SetFileInfo flags 1/2
 now set the host file's creation/modification time from the table entry;
 attributes (4) are still not kept. A save with SetFileInfo was not re-run.
 
+## Launcher Download/Update test (2026-11-21)
+Against the published v0.1.0 (ADHD-TISM/Dave-Mirra-2-Recomp), from empty
+scratch folders with BMX2_CLANG set (the 190 MB compiler download not re-run):
+- Download failed in launcher 2: the archive holds the project in
+  bmx2recomp/, the launcher expected it at the top. Fixed in launcher 3
+  (commit c509d96, not pushed yet); launcher 2 copies pick it up through
+  update-launcher once it is on GitHub.
+- Passed with the fix: download, build (script and packaged exe, the exe
+  with its downloaded embedded Python), the built game boots to riding;
+  update when current ("up to date"), update from an older tag (re-downloads,
+  game/ kept), update-launcher from version 1 (replaces the .py).
+- The packaged exe cannot update itself; it points to the releases page,
+  and the repository has no releases yet.
+
 ## Next step (recommended, 2026-11-21)
 1. Playtest further; add missing code from any message box. Every level now
    loads and rides in scripted crawls (see "Levels and cheats").
