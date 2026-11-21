@@ -67,7 +67,10 @@ The keyboard defaults are below. Change them in the launcher's **Settings** tab.
 | Select | Backspace or Right Shift |
 
 An Xbox-style gamepad works as the PS2 pad (A = Cross, B = Circle,
-X = Square, Y = Triangle). **F11** or **Alt+Enter** toggles fullscreen.
+X = Square, Y = Triangle). A second gamepad is player 2, for Multiplayer.
+With only one gamepad, set **Settings > Player 2 pad** to `gamepad1`: the
+gamepad is then player 2 and the keyboard player 1. **F11** or **Alt+Enter**
+toggles fullscreen.
 
 ## Settings
 

@@ -55,11 +55,13 @@ static void xi_load(void);
 /* XInputGetState on an empty slot is slow (it looks for the device each call):
    a slot that was empty is tried again only once a second */
 static int xi_read(DWORD idx, xi_state *x) {
-    static u64 retry_at[4];
+    static u64 retry_at[4]; static int misses[4];
     if (!xi_tried) xi_load();
     if (!xi_get || idx > 3 || g_frame < retry_at[idx]) return 0;
-    if (xi_get(idx, x) == 0) return 1;
-    retry_at[idx] = g_frame + 60;
+    if (xi_get(idx, x) == 0) { misses[idx] = 0; return 1; }
+    /* a connected pad that misses one read (a wireless blip) is retried next frame;
+       only after 3 misses in a row is the slot treated as empty */
+    if (++misses[idx] >= 3) retry_at[idx] = g_frame + 60;
     return 0;
 }
 
