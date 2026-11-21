@@ -3,6 +3,7 @@
 # or translate game code), VU1 code snapshots, builds, logs.
 /*
 !/.gitignore
+!/LICENSE
 !/bmx2recomp/
 !/launcher/
 
