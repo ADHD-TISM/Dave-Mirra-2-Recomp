@@ -111,6 +111,7 @@ static void rpc_dispatch(server_t *s, u32 fn, u32 send_size, u32 recv_size) {
         return; }
     case 0x80000701: {   /* sdrdrv (libsd remote): block-transfer streams go to spu2.c */
         u32 ch = iop32(s->buf + 4) & 1, mode = iop32(s->buf + 8), addr = iop32(s->buf + 12), size = iop32(s->buf + 16);
+        u32 a0 = iop32(s->buf + 4), a1 = mode, a2 = addr, a3 = size, a4 = iop32(s->buf + 20);   /* read before the reply clears them */
         if (recv_size && recv_size <= 0x10000) memset(buf, 0, recv_size);   /* same buffer as the args */
         if (fn == 0x80e0) {          /* BlockTrans(ch, mode, addr, size, ...); mode & 3: 0/3 write, 2 stop */
             if ((mode & 3) == 2) spu2_block_stop(ch); else spu2_block_start(ch, addr, size);
@@ -118,7 +119,25 @@ static void rpc_dispatch(server_t *s, u32 fn, u32 send_size, u32 recv_size) {
         } else if (fn == 0x8100) {   /* BlockTransStatus: (half << 24) | current address */
             iopw32(s->buf, spu2_block_status(ch));
             if (g_log_sys > 1) LOG("sdr: status ch%u -> %08x\n", ch, iop32(s->buf));
-        } else if (g_log_sys) LOG("sdr: fn %#x args %08x %08x %08x %08x\n", fn, iop32(s->buf + 4), mode, addr, size);
+        } else {
+            /* the rest of sceSdRemote: args from word 1, result in word 0 (the EE's libsdr
+               numbering, 0x8000 + 0x10 * libsd ordinal - 4: SetParam 0x8010 ... VoiceTrans 0x80d0) */
+            u32 r = 0;
+            switch (fn) {
+            case 0x8010: spu2_set_param(a0 & 0xffff, a1 & 0xffff); break;
+            case 0x8020: r = spu2_get_param(a0 & 0xffff); break;
+            case 0x8030: spu2_set_switch(a0 & 0xffff, a1); break;
+            case 0x8040: r = spu2_get_switch(a0 & 0xffff); break;
+            case 0x8050: spu2_set_addr(a0 & 0xffff, a1); break;
+            case 0x8060: r = spu2_get_addr(a0 & 0xffff); break;
+            case 0x8070: spu2_core_attr(a0 & 0xffff, a1); break;
+            case 0x80d0: r = spu2_voice_trans((int)a0, (int)a1, a2, a3, a4); break;   /* VoiceTrans(ch, mode, iop, spu, size) */
+            case 0x80f0: r = 1; break;                                                 /* VoiceTransStatus: done at once */
+            default: { static int seen[256]; if (!seen[fn & 0xff]++) LOG("sdr: fn %#x not handled (args %08x %08x %08x %08x)\n", fn, a0, a1, a2, a3); } break;
+            }
+            iopw32(s->buf, r);
+            if (g_log_sys) LOG("sdr: fn %#x args %08x %08x %08x %08x %08x -> %08x\n", fn, a0, a1, a2, a3, a4, r);
+        }
         return; }
     default:
         if (recv_size && recv_size <= 0x10000) memset(buf, 0, recv_size);

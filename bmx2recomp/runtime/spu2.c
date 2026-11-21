@@ -75,6 +75,7 @@ typedef struct {
     voice_t v[24];
     u32 endx, vmixl, vmixr, vmixel, vmixer, pmon, non;
     u16 mvoll, mvolr, attr;
+    u16 bvoll, bvolr;                /* core-external input (block transfer PCM) volume */
 } core_t;
 static core_t core[2];
 static u64 n_kon, n_sweep_vol;
@@ -188,6 +189,8 @@ void spu2_set_param(u32 entry, u32 val) {
     case 0x04: v->adsr2 = (u16)val; break;
     case 0x09: c->mvoll = (u16)val; break;
     case 0x0a: c->mvolr = (u16)val; break;
+    case 0x0f: c->bvoll = (u16)val; break;   /* BVOLL/R: the EE sets these over SDRDRV around movies */
+    case 0x10: c->bvolr = (u16)val; break;
     default: break;                  /* effect/aux volumes etc. */
     }
     if (g_log_spu > 1) LOG("spu2: param %04x = %04x\n", entry, val);
@@ -202,6 +205,7 @@ u32 spu2_get_param(u32 entry) {
     case 0x06: return (u32)(v->env * vol15(v->voll) >> 15) & 0xffff;
     case 0x07: return (u32)(v->env * vol15(v->volr) >> 15) & 0xffff;
     case 0x09: return c->mvoll; case 0x0a: return c->mvolr;
+    case 0x0f: return c->bvoll; case 0x10: return c->bvolr;
     }
     return 0;
 }
@@ -284,8 +288,8 @@ static void mix_frame(s32 *l, s32 *r) {
         u32 bytes = (u32)((f * 4) % b->size);           /* position in the stereo stream */
         u32 blk = bytes / 1024, in = (bytes % 1024) / 2; /* 1024 bytes = 256 frames: 512 L + 512 R */
         u32 base = b->addr + blk * 1024 + (in / 2) * 2;
-        *l += iop16(base);
-        *r += iop16(base + 512);
+        *l += (iop16(base) * (s32)(s16)core[c].bvoll) >> 15;      /* BVOL: plain 16-bit signed, no sweep bits */
+        *r += (iop16(base + 512) * (s32)(s16)core[c].bvolr) >> 15;
     }
 }
 

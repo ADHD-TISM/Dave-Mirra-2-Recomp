@@ -202,6 +202,7 @@ static void trxdir_write(u32 dir) {
     } else if (dir == 2) {
         local_to_local();
     } else if (dir == 1) {
+        { extern u64 fu_l2h_count; fu_l2h_count++; }
         static int once; if (!once++) LOG("gs: local->host transfer (not supported)\n");
     }
 }
@@ -213,6 +214,35 @@ static int nvq;
 
 static u32 cur_prim(void) { return F(R[PRIM], 0, 3); }
 static u32 attrs(void) { return (R[PRMODECONT] & 1) ? (u32)R[PRIM] : (u32)R[PRMODE]; }
+
+/* GS feature use, logged at exit with --log-gs or GS_FEATURES=1 (which "not done" parts matter) */
+u64 fu_l2h_count;
+static u64 fu_n, fu_date, fu_dthe, fu_noclamp, fu_ad, fu_fixhi, fu_pabe, fu_fba, fu_abe, fu_ad_d, fu_zread;
+static void fu_report(void) {
+    LOG("gs: features in %llu prims: blend %llu, Ad factor %llu, FIX>0x80 %llu, Ad as A/B/D %llu, DATE %llu, dither %llu, "
+        "COLCLAMP off %llu, PABE %llu, FBA %llu, local->host %llu, Z texture %llu\n",
+        fu_n, fu_abe, fu_ad, fu_fixhi, fu_ad_d, fu_date, fu_dthe, fu_noclamp, fu_pabe, fu_fba, fu_l2h_count, fu_zread);
+}
+static void fu_count(const gs_draw_state *st) {
+    fu_n++;
+    fu_date += st->date; fu_dthe += st->dthe;
+    if (st->abe) {
+        fu_abe++;
+        fu_noclamp += !st->colclamp;
+        if (!st->colclamp && getenv("GS_FEATURES")) {   /* which blends run with wrap, and when */
+            static u64 seen[256 * 2]; u32 k = st->alpha_a | st->alpha_b << 2 | st->alpha_c << 4 | st->alpha_d << 6;
+            u32 key = k * 2 + (st->alpha_fix > 0x40);
+            if (!seen[key]++) LOG("gs: COLCLAMP off with blend A%u B%u C%u D%u fix %02x tme %u fpsm %x fbp %x fbw %u fbmsk %08x prim %u scissor %u-%u,%u-%u ztst %u zmsk %u at frame %llu\n",
+                st->alpha_a, st->alpha_b, st->alpha_c, st->alpha_d, st->alpha_fix, st->tme, st->fpsm, st->fbp, st->fbw, st->fbmsk,
+                st->prim, st->scx0, st->scx1, st->scy0, st->scy1, st->ztst, st->zmsk, (unsigned long long)g_frame);
+        }
+        fu_ad += st->alpha_c == 1; fu_fixhi += st->alpha_c == 2 && st->alpha_fix > 0x80;
+        fu_ad_d += st->alpha_a == 1 || st->alpha_b == 1 || st->alpha_d == 1;
+        fu_pabe += st->pabe;
+    }
+    fu_fba += st->fba;
+    fu_zread += st->tme && (st->tpsm & 0x30) == 0x30;
+}
 
 static void build_state(gs_draw_state *st, int cls, u32 a) {
     memset(st, 0, sizeof *st);
@@ -271,6 +301,7 @@ static void build_state(gs_draw_state *st, int cls, u32 a) {
     st->scx0 = F(sc, 0, 11); st->scx1 = F(sc, 16, 11); st->scy0 = F(sc, 32, 11); st->scy1 = F(sc, 48, 11);
     st->colclamp = R[COLCLAMP] & 1;
     st->dthe = R[DTHE] & 1;
+    fu_count(st);
 }
 
 static void to_vertex(gs_vertex *o, const qvert *q, const qvert *col, u32 a, const gs_draw_state *st) {
@@ -511,5 +542,6 @@ void gs_vsync(void) {
 
 void gs_init(int show_window, int scale) {
     R[PRMODECONT] = 1;
+    if (g_log_gs || getenv("GS_FEATURES")) atexit(fu_report);
     if (!gsgl_init(show_window, scale)) { LOG("gs: OpenGL 3.3 initialisation failed\n"); exit(5); }
 }

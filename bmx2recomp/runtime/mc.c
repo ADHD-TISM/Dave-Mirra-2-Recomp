@@ -55,7 +55,7 @@ static void host_path(int port, const char *p, char *out, size_t n) {
         s = e;
     }
     int k = snprintf(out, n, MC_ROOT "\\mc%d", port & 1);
-    for (int i = 0; i < np; i++) k += snprintf(out + k, n - k, "\\%s", parts[i]);
+    for (int i = 0; i < np && k >= 0 && (size_t)k < n; i++) k += snprintf(out + k, n - k, "\\%s", parts[i]);   /* stop once truncated */
 }
 
 static void ensure_root(int port) {
@@ -115,6 +115,50 @@ static int get_dir(int port, const char *path, int maxent, u32 table) {
     return n;
 }
 
+/* free 1 KB clusters as on a formatted 8 MB card: 8000 when empty, less each
+ * file's clusters and each directory's entry clusters (512-byte entries) */
+#define MC_CLUSTERS 8000
+static int used_clusters(const char *hd, int root) {
+    char q[2100]; snprintf(q, sizeof q, "%s\\*", hd);
+    struct _finddata64i32_t f; intptr_t h = _findfirst64i32(q, &f);
+    int n = 0, used = 0;
+    if (h != -1) {
+        do {
+            if (!strcmp(f.name, ".") || !strcmp(f.name, "..")) continue;
+            n++;
+            if (f.attrib & _A_SUBDIR) { char sub[2100]; snprintf(sub, sizeof sub, "%s\\%s", hd, f.name); used += used_clusters(sub, 0); }
+            else used += (int)((f.size + 1023) / 1024);
+        } while (_findnext64i32(h, &f) == 0);
+        _findclose(h);
+    }
+    used += (n + 2 + 1) / 2;                      /* this directory's entries, with . and .. */
+    if (root) used -= 1;                          /* the empty root's cluster is part of the 8000 */
+    return used;
+}
+static int free_clusters(int port) {
+    char hd[64]; snprintf(hd, sizeof hd, MC_ROOT "\\mc%d", port & 1);
+    int f = MC_CLUSTERS - used_clusters(hd, 1);
+    return f < 0 ? 0 : f;
+}
+
+/* a 64-byte table entry's date (8 bytes: 0, sec, min, hour, day, month, year16) -> FILETIME */
+static int get_dt(u32 a, FILETIME *ft) {
+    u8 d[8]; for (int i = 0; i < 8; i++) d[i] = mr8(a + i);
+    SYSTEMTIME t = { 0 }; u16 y; memcpy(&y, d + 6, 2);
+    t.wYear = y; t.wMonth = d[5]; t.wDay = d[4]; t.wHour = d[3]; t.wMinute = d[2]; t.wSecond = d[1];
+    if (!t.wYear || !t.wMonth || !t.wDay) return 0;
+    FILETIME local; if (!SystemTimeToFileTime(&t, &local)) return 0;
+    return LocalFileTimeToFileTime(&local, ft);   /* put_dt writes local time */
+}
+static void set_times(const char *hp, u32 info, int create, int modify) {
+    FILETIME c, m; int hc = create && get_dt(info, &c), hm = modify && get_dt(info + 8, &m);
+    if (!hc && !hm) return;
+    HANDLE h = CreateFileA(hp, FILE_WRITE_ATTRIBUTES, FILE_SHARE_READ | FILE_SHARE_WRITE, NULL, OPEN_EXISTING, FILE_FLAG_BACKUP_SEMANTICS, NULL);
+    if (h == INVALID_HANDLE_VALUE) return;
+    SetFileTime(h, hc ? &c : NULL, NULL, hm ? &m : NULL);
+    CloseHandle(h);
+}
+
 static int mc_open(int port, const char *path, u32 mode) {
     if (port & 1) return NOENTRY;
     char hp[2048]; host_path(port, path, hp, sizeof hp);
@@ -153,7 +197,7 @@ void mc_rpc(u32 fn, u8 *b) {
         if (port == 0) {
             ensure_root(0);
             if (rd(b, 20)) mw32(res, 2);                                       /* PS2 card */
-            if (rd(b, 16)) mw32(res + 4, 7000);                                /* free 1 KB clusters */
+            if (rd(b, 16)) { int fc = free_clusters(0); mw32(res + 4, (u32)fc); if (g_log_mc) LOG("mc: card 1 has %d free clusters\n", fc); }   /* free 1 KB clusters */
             if (rd(b, 12)) mw32(res + 0x90, 1);                                /* formatted */
             r = seen[0] ? OK : CHANGED; seen[0] = 1;
         } else {
@@ -195,10 +239,12 @@ void mc_rpc(u32 fn, u8 *b) {
         else { char t[1024]; snprintf(t, sizeof t, "%s/%s", strcmp(cwd[port], "/") ? cwd[port] : "", p); snprintf(cwd[port], sizeof cwd[port], "%s", t); }
         r = 0; break; }
     case 13: r = (rd(b, 0) & 1) ? NOENTRY : get_dir(0, (const char *)b + 20, (int)rd(b, 12), rd(b, 16)); break;   /* GetDir */
-    case 14: {                                                                 /* SetFileInfo: rename only */
+    case 14: {   /* SetFileInfo: flags 1 created, 2 modified (host file times), 4 attributes (not kept), 0x10 name */
         int port = (int)rd(b, 0) & 1; u32 flags = rd(b, 8), info = rd(b, 16);
+        if ((flags & 3) && info) { char hp[2048]; host_path(port, (const char *)b + 20, hp, sizeof hp); set_times(hp, info, flags & 1, flags & 2); }
         if (flags & 0x10 && info) {
             char nn[33]; for (int i = 0; i < 32; i++) nn[i] = (char)mr8(info + 32 + i); nn[32] = 0;
+            if (!nn[0] || strpbrk(nn, "/\\:") || !strcmp(nn, ".") || !strcmp(nn, "..")) { r = -4; break; }   /* the new name must stay a plain file name */
             char from[2048], to[2048]; host_path(port, (const char *)b + 20, from, sizeof from);
             snprintf(to, sizeof to, "%s", from); char *s = strrchr(to, '\\'); if (s) snprintf(s + 1, sizeof to - (size_t)(s + 1 - to), "%s", nn);
             r = rename(from, to) ? NOENTRY : 0;

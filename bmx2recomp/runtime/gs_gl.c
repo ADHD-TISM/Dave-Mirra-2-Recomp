@@ -32,6 +32,7 @@
 #endif
 typedef char GLchar;
 typedef ptrdiff_t GLsizeiptr;
+#define GL_RGBA32F 0x8814
 #define GL_TEXTURE0 0x84C0
 #define GL_VERTEX_SHADER 0x8B31
 #define GL_FRAGMENT_SHADER 0x8B30
@@ -77,6 +78,7 @@ typedef ptrdiff_t GLsizeiptr;
     X(void, glUniform4f, (GLint, GLfloat, GLfloat, GLfloat, GLfloat)) \
     X(void, glUniform2i, (GLint, GLint, GLint)) \
     X(void, glUniform4i, (GLint, GLint, GLint, GLint, GLint)) \
+    X(void, glUniform4ui, (GLint, GLuint, GLuint, GLuint, GLuint)) \
     X(void, glGenVertexArrays, (GLsizei, GLuint *)) \
     X(void, glBindVertexArray, (GLuint)) \
     X(void, glGenBuffers, (GLsizei, GLuint *)) \
@@ -673,6 +675,67 @@ void gsgl_draw(const gs_draw_state *st, const gs_vertex *v, u32 n) {
     nv += n;
 }
 
+/* COLCLAMP = 0 (colour wrap): the blend result is kept mod 256 instead of being
+ * clamped. The game's shadow volumes need it: into a 16-bit buffer filled with
+ * 0x78 it adds 0x08 for front faces and 0xf8 (-8 mod 256) for back faces, then
+ * keeps bit 7 by writing 0 with FBMSK 0x80808080. Partial FBMSK bits (not a
+ * whole channel) need the same treatment: such a batch is drawn into a float
+ * copy of the target (no clamp), then a resolve pass writes back
+ * (new mod 256 or clamped) & ~FBMSK | old & FBMSK. */
+static GLuint wrap_tex, wrap_fbo, old_tex, wprog; static int wrap_w, wrap_h, old_w, old_h;
+static GLint wu_dst, wu_src, wu_tex, wu_old, wu_wrap, wu_mask; static u64 n_wrap, n_bitmask;
+static const char *wfs_src =
+    "#version 330 core\n"
+    "uniform sampler2D u_tex, u_old; uniform int u_wrap; uniform uvec4 u_mask; in vec2 v_uv; out vec4 o;\n"
+    "void main() {\n"
+    "  ivec2 p = ivec2(gl_FragCoord.xy);\n"
+    "  vec4 v = floor(texelFetch(u_tex, p, 0) * 255.0 + 0.5);\n"
+    "  v = u_wrap == 1 ? mod(v, 256.0) : clamp(v, 0.0, 255.0);\n"
+    "  uvec4 n = uvec4(v), d = uvec4(floor(texelFetch(u_old, p, 0) * 255.0 + 0.5));\n"
+    "  o = vec4((n & ~u_mask) | (d & u_mask)) / 255.0;\n"
+    "}\n";
+/* rect = scissor in target pixels (scaled): x, y, w, h */
+static void wrap_begin(target *t, GLuint ztex, const GLboolean *cm, int need_old, const int *rect) {
+    int w = t->w * S, h = TH * S;
+    if (!wrap_fbo) glGenFramebuffers(1, &wrap_fbo);
+    if (!wrap_tex || wrap_w != w || wrap_h != h) {
+        if (wrap_tex) glDeleteTextures(1, &wrap_tex);
+        wrap_tex = new_tex(w, h, GL_RGBA32F, GL_RGBA, GL_FLOAT); wrap_w = w; wrap_h = h;
+        glBindFramebuffer(GL_FRAMEBUFFER, wrap_fbo);
+        glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, wrap_tex, 0);
+    }
+    if (need_old) {
+        if (!old_tex || old_w != w || old_h != h) {
+            if (old_tex) glDeleteTextures(1, &old_tex);
+            old_tex = new_tex(w, h, GL_RGBA8, GL_RGBA, GL_UNSIGNED_BYTE); old_w = w; old_h = h;
+        }
+        glBindFramebuffer(GL_READ_FRAMEBUFFER, t->fbo);
+        glBindTexture(GL_TEXTURE_2D, old_tex);
+        glCopyTexSubImage2D(GL_TEXTURE_2D, 0, rect[0], rect[1], rect[0], rect[1], rect[2], rect[3]);
+    }
+    glBindFramebuffer(GL_FRAMEBUFFER, wrap_fbo);
+    glFramebufferTexture2D(GL_FRAMEBUFFER, GL_DEPTH_ATTACHMENT, GL_TEXTURE_2D, ztex, 0);
+    glColorMask(1, 1, 1, 1);
+    glBindFramebuffer(GL_READ_FRAMEBUFFER, t->fbo);
+    glBindFramebuffer(GL_DRAW_FRAMEBUFFER, wrap_fbo);
+    glBlitFramebuffer(rect[0], rect[1], rect[0] + rect[2], rect[1] + rect[3], rect[0], rect[1], rect[0] + rect[2], rect[1] + rect[3],
+                      GL_COLOR_BUFFER_BIT, GL_NEAREST);
+    glBindFramebuffer(GL_FRAMEBUFFER, wrap_fbo);
+    glColorMask(cm[0], cm[1], cm[2], cm[3]);
+}
+static void wrap_end(target *t, const GLboolean *cm, int wrap, u32 mask, int need_old) {
+    glBindFramebuffer(GL_FRAMEBUFFER, t->fbo);
+    glDisable(GL_BLEND); glDisable(GL_DEPTH_TEST);
+    glColorMask(cm[0], cm[1], cm[2], cm[3]);
+    glUseProgram(wprog);
+    glUniform4f(wu_dst, -1, -1, 1, 1); glUniform4f(wu_src, 0, 0, 1, 1);
+    glUniform1i(wu_wrap, wrap);
+    glUniform4ui(wu_mask, need_old ? mask & 0xff : 0, need_old ? (mask >> 8) & 0xff : 0, need_old ? (mask >> 16) & 0xff : 0, need_old ? mask >> 24 : 0);
+    glActiveTexture(GL_TEXTURE0 + 1); glBindTexture(GL_TEXTURE_2D, need_old ? old_tex : wrap_tex);
+    glActiveTexture(GL_TEXTURE0); glBindTexture(GL_TEXTURE_2D, wrap_tex);
+    glDrawArrays(GL_TRIANGLE_STRIP, 0, 4);
+}
+
 static GLenum zfunc(u32 t) { static const GLenum f[4] = { GL_NEVER, GL_ALWAYS, GL_GEQUAL, GL_GREATER }; return f[t & 3]; }
 
 static u64 ft_tex, ft_state, ft_draw, n_selfcopy, ft_present, ft_from_cyc; static u64 ft_from = ~0ull;
@@ -682,6 +745,7 @@ void gsgl_flush(void) {
     u32 n = nv; nv = 0;
     if (!n) return;
     gs_draw_state st = cur;
+    int srect[4] = { 0, 0, 0, 0 };
     if (g_log_gs > 1)
         LOG("gs: batch %u verts prim %u fb %x/%u/%x msk %x tme %u tex %x/%u/%x %ux%u fst %u tfx %u abe %u(%u%u%u%u) z %u/%u/%u sc %u,%u-%u,%u v0 %.1f,%.1f c %02x%02x%02x%02x st %.3f,%.3f,%.3f\n",
             n, st.prim, st.fbp, st.fbw, st.fpsm, st.fbmsk, st.tme, st.tbp, st.tbw, st.tpsm, 1u << st.tw, 1u << st.th, st.fst, st.tfx,
@@ -792,13 +856,20 @@ void gsgl_flush(void) {
         if (x1 < x0) x1 = x0;
         if (y1 < y0) y1 = y0;
         glScissor(x0 * S, y0 * S, (x1 - x0) * S, (y1 - y0) * S);
+        srect[0] = x0 * S; srect[1] = y0 * S; srect[2] = (x1 - x0) * S; srect[3] = (y1 - y0) * S;
     }
     u32 m = st.fbmsk;
+    int is16 = st.fpsm == PSMCT16 || st.fpsm == PSMCT16S;
+    u32 full = is16 ? 0xf8 : 0xff;        /* a 16-bit pixel keeps bits 3-7 of each channel */
     int ma = (m >> 24) != 0xff;
     if (st.fpsm == PSMCT24) ma = 0;
-    if (st.fpsm == PSMCT16 || st.fpsm == PSMCT16S) ma = !(m & 0x80000000u);
-    GLboolean cm[4] = { (m & 0xff) != 0xff, ((m >> 8) & 0xff) != 0xff, ((m >> 16) & 0xff) != 0xff, (GLboolean)ma };
+    if (is16) ma = !(m & 0x80000000u);
+    GLboolean cm[4] = { (m & full) != full, ((m >> 8) & full) != full, ((m >> 16) & full) != full, (GLboolean)ma };
     glColorMask(cm[0], cm[1], cm[2], cm[3]);
+    /* FBMSK bits inside a written channel: merge with the old pixel in the resolve pass */
+    u32 bitmask = 0;
+    for (int c = 0; c < 3; c++) { u32 b = (m >> (8 * c)) & full; if (cm[c] && b) bitmask |= b << (8 * c); }
+    if (!is16 && st.fpsm != PSMCT24 && cm[3] && (m >> 24)) bitmask |= m & 0xff000000u;
 
     glUseProgram(prog);
     U2f(U.rtsize, (float)t->w, (float)TH);
@@ -846,6 +917,15 @@ void gsgl_flush(void) {
     }
     if (st.date) { static int once; if (!once++) LOG("gs: destination alpha test not supported\n"); }
 
+    static int no_wrap = -1; if (no_wrap < 0) no_wrap = getenv("GS_NO_WRAP") != 0;   /* GS_NO_WRAP=1: clamp as before (comparison) */
+    int wrap = st.abe && !st.colclamp && !no_wrap;
+    int merge = wprog && (wrap || bitmask);
+    if (merge) {
+        wrap_begin(t, need_z ? t->ztex : 0, cm, bitmask != 0, srect);
+        if (wrap && !n_wrap++) LOG("gs: colour wrap (COLCLAMP 0) drawing at frame %llu\n", (unsigned long long)g_frame);
+        if (bitmask && !n_bitmask++) LOG("gs: FBMSK %08x (bits inside channels) at frame %llu\n", st.fbmsk, (unsigned long long)g_frame);
+    }
+
     ft_state += __rdtsc() - tc0; tc0 = __rdtsc();
     glBindVertexArray(vao);
     glBindBuffer(GL_ARRAY_BUFFER, vbo);
@@ -867,6 +947,7 @@ void gsgl_flush(void) {
         }
         glDrawArrays(mode, first, n);
     }
+    if (merge) wrap_end(t, cm, wrap, bitmask, bitmask != 0);
     t->dirty = 1; t->clean = 0;
     ft_draw += __rdtsc() - tc0;
     n_batches++; n_draw_verts += n;
@@ -1033,6 +1114,10 @@ static void present_rect_(u32 fbp, u32 fbw, u32 psm, u32 dbx, u32 dby, u32 w, u3
                 u32 *pix = malloc((size_t)w * h * 4);
                 target_read(t, dbx, dby + yoff, w, h, pix);
                 write_shot(pix, w, h); free(pix);
+                /* GS_SHOT_TARGET=<fbp hex>: also shoot that target (debugging off-screen buffers) */
+                const char *e = getenv("GS_SHOT_TARGET");
+                u32 oy = 0; target *o = e ? find_target((u32)strtoul(e, 0, 16), 8, PSMCT16S, &oy) : 0;
+                if (o) { pix = malloc((size_t)512 * 224 * 4); target_read(o, 0, oy, 512, 224, pix); shot_frame++; write_shot(pix, 512, 224); shot_frame--; free(pix); }
             }
         } else {
             u32 *pix = malloc((size_t)w * h * 4);
@@ -1211,6 +1296,12 @@ int gsgl_init(int show_window, int scale) {
     glUseProgram(prog); glUniform1i(U.tex, 0);
     for (int k = 1; k <= 6; k++) glUniform1i(U.mip[k], k);   /* mip levels 1..6 on texture units 1..6 */
     glUseProgram(cprog); glUniform1i(cu_tex, 0);
+    if ((wprog = link(cvs_src, wfs_src))) {
+        wu_dst = glGetUniformLocation(wprog, "u_dst"); wu_src = glGetUniformLocation(wprog, "u_src");
+        wu_tex = glGetUniformLocation(wprog, "u_tex");
+        wu_old = glGetUniformLocation(wprog, "u_old"); wu_wrap = glGetUniformLocation(wprog, "u_wrap"); wu_mask = glGetUniformLocation(wprog, "u_mask");
+        glUseProgram(wprog); glUniform1i(wu_tex, 0); glUniform1i(wu_old, 1);
+    } else LOG("gs: colour wrap shader failed; COLCLAMP 0 clamps\n");
 
     glGenVertexArrays(1, &vao);
     glBindVertexArray(vao);

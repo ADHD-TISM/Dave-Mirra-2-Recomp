@@ -127,9 +127,11 @@ Files: `gs_mem.c` (swizzle), `gs.c` (front end), `gs_gl.c` (GPU back end),
   into overlapping targets of the same layout, readers of memory a dirty target
   covers download it first, textures that are a target are sampled from it.
   Decoded textures are cached on TEX0/CLUT/TEXA + per-page write generations.
-  Not done: DATE, dithering, COLCLAMP wrap, Ad as blend factor (taken as 1.0),
-  blend factors above 1.0 on the destination side, local->host transfers,
-  mipmaps (MMIN uses the MMAG filter), Z buffer readback.
+  Not done: DATE, dithering, Ad as blend factor (taken as 1.0), blend factors
+  above 1.0 on the destination side, local->host transfers, Z buffer
+  readback. GS_FEATURES=1 counts their use at exit: over the whole test route
+  the game uses none of them (2026-11-21). COLCLAMP wrap and FBMSK bits inside
+  a channel are done (see "Shadows").
 - `vif.c`: every VIF command; UNPACK with cycle (skip and fill), mask,
   row/col, add modes, FLG/TOPS; BASE/OFFSET double buffering; MPG; DIRECT.
   **i-bit interrupts matter**: the game's VIF1 handler (0x107668) reads
@@ -426,7 +428,8 @@ SPU_VOLUME=<percent> scales the mix (spu2.c); `volume = N` in bmx2.ini (launcher
 Audio tab) sets it. Real-time test runs use SPU_VOLUME=50 (user request).
 
 ## Not written yet
-In the GS: see "Not done" above. In audio: reverb, volume sweeps, noise.
+In the GS: see "Not done" above (unused by the game). In audio: reverb,
+volume sweeps, noise, pitch modulation: never set by the game (ZAUDIO or EE).
 
 ## Renderer requirement (user, 2026-11-16): use the GPU
 The GS renderer is to be hardware-accelerated, not a software rasteriser:
@@ -522,6 +525,39 @@ high-refresh monitors.
   present gaps.
 - Profiler: samples outside bmx2.exe also record the first return address
   into bmx2.exe on the stack, in <PROF>.callers (resolve with tools/prof.py).
+
+## Shadows: colour wrap + bit masks (2026-11-21)
+Riding levels draw stencil-style shadow volumes every frame into a 16-bit
+512x224 buffer at FBP 0x1200: fill 0x78 where the scene is far, add 0x08
+(front faces) and 0xf8 (back faces, -8 mod 256) with COLCLAMP 0 and Z test
+GREATER, write 0 with FBMSK 0x80808080 (keeps bit 7 only), then subtract
+the buffer from the frame ((Cd - Cs) * FIX, vertex colour 0x10). With
+clamping and whole-channel masks the mask was always 0: no shadows.
+gs_gl.c now sends a batch with COLCLAMP 0 or FBMSK bits inside a channel
+through a merge path: copy the target into an RGBA32F texture (same depth
+attachment), draw there, then a resolve pass writes (new mod 256, or
+clamped) & ~FBMSK | old & FBMSK. 16-bit targets compare masks on bits 3-7.
+The rider's shadow now shows (darkens the ground by 8). GS_NO_WRAP=1 restores
+clamping; GS_SHOT_TARGET=1200 also shoots that buffer with GS_SHOT.
+Real-time route: worst frame 17.8 ms, 0 underruns.
+
+## Audio over SDRDRV (2026-11-21)
+The EE calls libsd remotely (sid 0x80000701, fn 0x8000 + 0x10 * (ordinal - 4)).
+Besides BlockTrans/Status it sends SetParam BVOLL/BVOLR (0x0f81/0x1081, core 1)
+= 0x7fff before each movie and 0 after, and 5 VoiceTrans of 2 KB to SPU
+0x4000 (the core 0 input buffer). sif.c now passes SetParam/GetParam/
+Set/GetSwitch/Set/GetAddr/SetCoreAttr/VoiceTrans(+Status) to spu2.c (args
+are read before the reply clears the buffer), and block PCM is scaled by
+BVOL (plain 16-bit signed). Movie sound unchanged (RMS within 1).
+ZAUDIO's libsd calls (--log-spu 2) are only VOL/PITCH/ADSR/SSA, KON/KOFF and
+MVOL: no reverb, noise, sweeps or pitch modulation, so none is modelled.
+
+## Memory card free space (2026-11-21)
+GetInfo reports 8000 clusters less each file's 1 KB clusters and each
+directory's entry clusters (2 entries of 512 bytes per cluster, with . and ..),
+e.g. the game's save folder (4 files, 60 KB) leaves 7936. SetFileInfo flags 1/2
+now set the host file's creation/modification time from the table entry;
+attributes (4) are still not kept. A save with SetFileInfo was not re-run.
 
 ## Next step (recommended, 2026-11-21)
 1. Playtest further; add missing code from any message box. Every level now
