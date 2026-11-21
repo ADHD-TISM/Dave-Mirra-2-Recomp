@@ -695,19 +695,24 @@ static const char *wfs_src =
     "  o = vec4((n & ~u_mask) | (d & u_mask)) / 255.0;\n"
     "}\n";
 /* rect = scissor in target pixels (scaled): x, y, w, h */
-static void wrap_begin(target *t, GLuint ztex, const GLboolean *cm, int need_old, const int *rect) {
+/* The scratch textures only grow: a larger attachment than the target is fine
+ * (same origin, the viewport and scissor stay the target's). */
+static void wrap_begin(target *t, GLuint ztex, const GLboolean *cm, int need_old, const int *rect, GLuint batch_tex) {
     int w = t->w * S, h = TH * S;
     if (!wrap_fbo) glGenFramebuffers(1, &wrap_fbo);
-    if (!wrap_tex || wrap_w != w || wrap_h != h) {
+    if (!wrap_tex || w > wrap_w || h > wrap_h) {
         if (wrap_tex) glDeleteTextures(1, &wrap_tex);
+        if (w < wrap_w) w = wrap_w;
+        if (h < wrap_h) h = wrap_h;
         wrap_tex = new_tex(w, h, GL_RGBA32F, GL_RGBA, GL_FLOAT); wrap_w = w; wrap_h = h;
         glBindFramebuffer(GL_FRAMEBUFFER, wrap_fbo);
         glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, wrap_tex, 0);
     }
     if (need_old) {
-        if (!old_tex || old_w != w || old_h != h) {
+        if (!old_tex || w > old_w || h > old_h) {
+            int ow = w > old_w ? w : old_w, oh = h > old_h ? h : old_h;
             if (old_tex) glDeleteTextures(1, &old_tex);
-            old_tex = new_tex(w, h, GL_RGBA8, GL_RGBA, GL_UNSIGNED_BYTE); old_w = w; old_h = h;
+            old_tex = new_tex(ow, oh, GL_RGBA8, GL_RGBA, GL_UNSIGNED_BYTE); old_w = ow; old_h = oh;
         }
         glBindFramebuffer(GL_READ_FRAMEBUFFER, t->fbo);
         glBindTexture(GL_TEXTURE_2D, old_tex);
@@ -722,6 +727,8 @@ static void wrap_begin(target *t, GLuint ztex, const GLboolean *cm, int need_old
                       GL_COLOR_BUFFER_BIT, GL_NEAREST);
     glBindFramebuffer(GL_FRAMEBUFFER, wrap_fbo);
     glColorMask(cm[0], cm[1], cm[2], cm[3]);
+    /* new_tex and the old copy rebound unit 0: give the batch its texture back */
+    glActiveTexture(GL_TEXTURE0); glBindTexture(GL_TEXTURE_2D, batch_tex);
 }
 static void wrap_end(target *t, const GLboolean *cm, int wrap, u32 mask, int need_old) {
     glBindFramebuffer(GL_FRAMEBUFFER, t->fbo);
@@ -921,7 +928,7 @@ void gsgl_flush(void) {
     int wrap = st.abe && !st.colclamp && !no_wrap;
     int merge = wprog && (wrap || bitmask);
     if (merge) {
-        wrap_begin(t, need_z ? t->ztex : 0, cm, bitmask != 0, srect);
+        wrap_begin(t, need_z ? t->ztex : 0, cm, bitmask != 0, srect, tex);
         if (wrap && !n_wrap++) LOG("gs: colour wrap (COLCLAMP 0) drawing at frame %llu\n", (unsigned long long)g_frame);
         if (bitmask && !n_bitmask++) LOG("gs: FBMSK %08x (bits inside channels) at frame %llu\n", st.fbmsk, (unsigned long long)g_frame);
     }
@@ -1114,7 +1121,7 @@ static void present_rect_(u32 fbp, u32 fbw, u32 psm, u32 dbx, u32 dby, u32 w, u3
                 u32 *pix = malloc((size_t)w * h * 4);
                 target_read(t, dbx, dby + yoff, w, h, pix);
                 write_shot(pix, w, h); free(pix);
-                /* GS_SHOT_TARGET=<fbp hex>: also shoot that target (debugging off-screen buffers) */
+                /* GS_SHOT_TARGET=<fbp hex>: also shoot that target, taken as a 512x224 PSMCT16S buffer of FBW 8 (the shadow mask) */
                 const char *e = getenv("GS_SHOT_TARGET");
                 u32 oy = 0; target *o = e ? find_target((u32)strtoul(e, 0, 16), 8, PSMCT16S, &oy) : 0;
                 if (o) { pix = malloc((size_t)512 * 224 * 4); target_read(o, 0, oy, 512, 224, pix); shot_frame++; write_shot(pix, 512, 224); shot_frame--; free(pix); }

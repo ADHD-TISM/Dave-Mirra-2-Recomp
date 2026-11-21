@@ -185,6 +185,7 @@ static void local_to_local(void) {
     if (g_log_gs) LOG("gs: local->local %ux%u %x(%x) -> %x(%x)\n", w, h, sbp, spsm, dbp, dpsm);
 }
 
+static u64 fu_l2h_count;   /* local->host transfers, for the GS_FEATURES report */
 static void trxdir_write(u32 dir) {
     if (xfer.active) { if (g_log_gs) LOG("gs: transfer restarted with %u,%u left\n", xfer.x, xfer.y); xfer_done(); }
     u64 b = R[BITBLTBUF], p = R[TRXPOS], r = R[TRXREG];
@@ -202,7 +203,7 @@ static void trxdir_write(u32 dir) {
     } else if (dir == 2) {
         local_to_local();
     } else if (dir == 1) {
-        { extern u64 fu_l2h_count; fu_l2h_count++; }
+        fu_l2h_count++;
         static int once; if (!once++) LOG("gs: local->host transfer (not supported)\n");
     }
 }
@@ -216,7 +217,6 @@ static u32 cur_prim(void) { return F(R[PRIM], 0, 3); }
 static u32 attrs(void) { return (R[PRMODECONT] & 1) ? (u32)R[PRIM] : (u32)R[PRMODE]; }
 
 /* GS feature use, logged at exit with --log-gs or GS_FEATURES=1 (which "not done" parts matter) */
-u64 fu_l2h_count;
 static u64 fu_n, fu_date, fu_dthe, fu_noclamp, fu_ad, fu_fixhi, fu_pabe, fu_fba, fu_abe, fu_ad_d, fu_zread;
 static void fu_report(void) {
     LOG("gs: features in %llu prims: blend %llu, Ad factor %llu, FIX>0x80 %llu, Ad as A/B/D %llu, DATE %llu, dither %llu, "
@@ -229,7 +229,8 @@ static void fu_count(const gs_draw_state *st) {
     if (st->abe) {
         fu_abe++;
         fu_noclamp += !st->colclamp;
-        if (!st->colclamp && getenv("GS_FEATURES")) {   /* which blends run with wrap, and when */
+        static int want = -1; if (want < 0) want = getenv("GS_FEATURES") != 0;
+        if (!st->colclamp && want) {   /* which blends run with wrap, and when */
             static u64 seen[256 * 2]; u32 k = st->alpha_a | st->alpha_b << 2 | st->alpha_c << 4 | st->alpha_d << 6;
             u32 key = k * 2 + (st->alpha_fix > 0x40);
             if (!seen[key]++) LOG("gs: COLCLAMP off with blend A%u B%u C%u D%u fix %02x tme %u fpsm %x fbp %x fbw %u fbmsk %08x prim %u scissor %u-%u,%u-%u ztst %u zmsk %u at frame %llu\n",

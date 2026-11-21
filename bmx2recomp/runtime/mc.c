@@ -244,7 +244,7 @@ void mc_rpc(u32 fn, u8 *b) {
         if ((flags & 3) && info) { char hp[2048]; host_path(port, (const char *)b + 20, hp, sizeof hp); set_times(hp, info, flags & 1, flags & 2); }
         if (flags & 0x10 && info) {
             char nn[33]; for (int i = 0; i < 32; i++) nn[i] = (char)mr8(info + 32 + i); nn[32] = 0;
-            if (!nn[0] || strpbrk(nn, "/\\:") || !strcmp(nn, ".") || !strcmp(nn, "..")) { r = -4; break; }   /* the new name must stay a plain file name */
+            if (!nn[0] || strpbrk(nn, "/\\:") || !strcmp(nn, ".") || !strcmp(nn, "..")) { r = NOENTRY; break; }   /* the new name must stay a plain file name */
             char from[2048], to[2048]; host_path(port, (const char *)b + 20, from, sizeof from);
             snprintf(to, sizeof to, "%s", from); char *s = strrchr(to, '\\'); if (s) snprintf(s + 1, sizeof to - (size_t)(s + 1 - to), "%s", nn);
             r = rename(from, to) ? NOENTRY : 0;
