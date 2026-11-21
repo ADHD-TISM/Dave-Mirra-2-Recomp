@@ -76,8 +76,10 @@ toggles fullscreen.
 
 The **Settings** tab edits `game\bmx2.ini`. You can change the internal
 resolution, window size, fullscreen, picture shape (4:3 or stretched), picture
-filter, volume, vsync and the key bindings. Delete `bmx2.ini` to get the
-defaults back.
+filter, volume, vsync, widescreen (16:9), gamepad vibration, skipping the
+intro movies and the key bindings. Internal resolution 2-4 also smooths
+edges. The game vibrates the pad only while grinding and on a few surfaces,
+as on the PS2. Delete `bmx2.ini` to get the defaults back.
 
 ## Saves
 
