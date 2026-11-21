@@ -167,6 +167,28 @@ static u8 axis(SHORT v, int flip) {
 static void gamepad_in(pad_in *p, const xi_state *x);
 
 /* one player's input; returns whether that player's pad is plugged in */
+/* skip_intro: the boot movies end when Start is pressed, so while one of them
+   plays (its .PSS was opened by name and the IPU decoded within 10 frames)
+   player 1's Start is pulsed, 4 frames down, 4 up. Any other movie (Cool Stuff,
+   rider bios) ends intro mode, as does INTRO.PSS, the last boot movie, ending. */
+static int intro_movie = -1;   /* -1 boot, 1 intro movie open, 0 intro over */
+static int intro_last;         /* the open movie is INTRO.PSS */
+void pad_movie_opened(const char *nm) {
+    if (g_log_pad) LOG("pad: movie %s opened at frame %llu\n", nm, (unsigned long long)g_frame);
+    if (intro_movie == 0) return;
+    const char *b = strrchr(nm, '\\'); b = b ? b + 1 : nm;
+    if (!_strnicmp(b, "ACCLAIM.PSS", 11) || !_strnicmp(b, "ZINTRO.PSS", 10) || !_strnicmp(b, "INTRO.PSS", 9)) {
+        intro_movie = 1; intro_last = !_strnicmp(b, "INTRO.PSS", 9);
+    } else intro_movie = 0;
+}
+static int intro_press(void) {
+    extern u64 g_ipu_last_frame;
+    if (intro_movie != 1) return 0;
+    int playing = g_ipu_last_frame && g_frame - g_ipu_last_frame < 10;
+    if (!playing) { if (intro_last && g_frame - g_ipu_last_frame > 30) intro_movie = 0; return 0; }
+    return g_cfg.skip_intro && (g_frame & 4);
+}
+
 static int read_host(int port, pad_in *p) {
     p->buttons = 0; p->lx = p->ly = p->rx = p->ry = 0x80;
     if (nscripts[port] < 0) script_load(port);
@@ -196,6 +218,7 @@ static int read_host(int port, pad_in *p) {
     }
 
     if (g_cfg.gamepad && g_cfg.pad2 != 2 && xi_read(0, &x)) gamepad_in(p, &x);
+    if (intro_press()) p->buttons |= B_START;
     return 1;
 }
 

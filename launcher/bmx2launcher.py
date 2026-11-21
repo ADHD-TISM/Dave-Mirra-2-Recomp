@@ -825,6 +825,8 @@ SETTINGS = [
      "1 = the gamepad vibrates when the game asks for it (also needs Vibration: On in the game's Options > Controller)"),
     ("pad2", "Gameplay", "Player 2 pad", "choice", ["gamepad2", "gamepad1", "off"], "gamepad2",
      "Player 2 (Multiplayer): gamepad2 = second gamepad, gamepad1 = first gamepad (player 1 uses the keyboard), off. Needs gamepads on"),
+    ("skip_intro", "Gameplay", "Skip intro movies", "bool", B01, "0",
+     "1 = skip the start-up movies (Acclaim and Z-Axis logos still show 2 s each); movies in Cool Stuff still play"),
     ("scale", "Video", "Internal resolution", "choice", ["1", "2", "3", "4"], "2",
      "Internal 3D resolution: 1 = original PS2, 2-4 = sharper, with smoother edges (supersampled with the smooth filter; more GPU work)"),
     ("window_size", "Video", "Window size", "combo", ["auto", "640x480", "960x720", "1280x960", "1600x1200",

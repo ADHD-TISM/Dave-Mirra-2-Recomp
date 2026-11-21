@@ -673,7 +673,9 @@ static void reset(void) {
 }
 
 /* ---- EE interface -------------------------------------------------------- */
+u64 g_ipu_last_frame;   /* frame of the newest IPU command (a movie is playing) */
 void ipu_write_cmd(u32 v) {
+    g_ipu_last_frame = g_frame;
     if (ipu.busy) { LOG("ipu: command %08x written while busy with %08x\n", v, ipu.cmd); return; }
     ipu.ctrl &= ~(3u << 14);         /* ECD, SCD */
     if ((v >> 28) == CMD_BCLR) {

@@ -711,3 +711,15 @@ presented window with GS_SHOT. Real time at scale 4 + widescreen: worst frame
 ## Next step (recommended, 2026-11-21)
 1. Playtest further; add missing code from any message box. Every level now
    loads and rides in scripted crawls (see "Levels and cheats").
+
+## Skip intro movies (2026-11-21)
+bmx2.ini skip_intro = 1 (launcher Gameplay tab, off by default). The boot
+movies are ACCLAIM.PSS (frame 140), ZINTRO.PSS (266) and INTRO.PSS (394);
+the game ends each one when Start is pressed, after about 2 s for the two
+logos. iop.c reports every .PSS open (ZCDDVD sid 0x45 fn 3/4) to pad.c, ipu.c
+keeps the frame of the newest IPU command; while a boot movie is open and the
+IPU decoded within 10 frames, pad.c pulses player 1's Start (4 frames down, 4
+up). Intro mode ends when another movie opens or 30 frames after INTRO.PSS
+stops decoding, so Cool Stuff movies and the menus get no presses. Main menu
+at frame ~600 instead of ~2000+. Failing the .PSS open (--no-movies) is still
+not a skip: the game then calls a null method.

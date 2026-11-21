@@ -305,6 +305,11 @@ static void rpc_loop(u32 qd) {
         if (!s) continue;
         if (g_log_sys) LOG("iop: rpc sid=%x fn=%u size=%u : %08x %08x %08x %08x\n", r.sid, r.fn, r.size,
                            ir32(s->buf), ir32(s->buf + 4), ir32(s->buf + 8), ir32(s->buf + 12));
+        if (r.sid == 0x45 && (r.fn == 3 || r.fn == 4)) {
+            char nm[256]; gstr(s->buf, nm, sizeof nm);
+            extern void pad_movie_opened(const char *name);
+            if (strstr(nm, ".PSS") || strstr(nm, ".pss")) pad_movie_opened(nm);
+        }
         if (g_no_movies && r.sid == 0x45 && (r.fn == 3 || r.fn == 4)) {
             char nm[256]; gstr(s->buf, nm, sizeof nm);
             if (strstr(nm, ".PSS") || strstr(nm, ".pss")) iw8(s->buf, '?');   /* lookup fails, game skips the movie */
