@@ -506,6 +506,10 @@ static void packed_write(u32 reg, const u8 *q) {
 }
 
 void gif_transfer(const u8 *p, u32 nqw, int path) {
+    {   /* on the VU stage of the split graphics threads: hand it to the GS stage (gsthread.c) */
+        extern __thread int g_on_vu_stage; void gst2_gif(const u8 *p, u32 nqw, int path);
+        if (g_on_vu_stage) { gst2_gif(p, nqw, path); return; }
+    }
     gif_path *g = &gp[path & 3];
     n_gif_qw += nqw;
     for (u32 i = 0; i < nqw; i++, p += 16) {

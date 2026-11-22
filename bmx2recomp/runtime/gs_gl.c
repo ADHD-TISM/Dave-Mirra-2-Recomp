@@ -1148,11 +1148,13 @@ static void ftimes_before_swap(u64 now) {
     if (busy > 12) ft_busy12++; if (busy > 16) ft_busy16++; if (busy > ft_busy_max) ft_busy_max = busy;
     if (g_log_frames && busy > 16) LOG("frames: graphics thread busy %.1f ms at frame %llu\n", busy, (unsigned long long)g_frame);
 }
-static u64 ft_cyc0, ft_cyc1, ft_cyc_frames;   /* graphics thread CPU cycles (QueryThreadCycleTime) from frame 6500 */
+static u64 ft_cyc0, ft_cyc1, ft_cyc_frames, ft_vcyc0, ft_vcyc1, ft_wall0, ft_wall1;   /* graphics thread CPU cycles (QueryThreadCycleTime) from frame 6500 */
 static void ftimes_after_swap(u64 t0, u64 t1) {
     if (g_frame >= 6500) {
-        ULONG64 c; QueryThreadCycleTime(GetCurrentThread(), &c);
-        if (!ft_cyc0) ft_cyc0 = c; else { ft_cyc1 = c; ft_cyc_frames++; }
+        extern HANDLE g_gst_vu_thread;   /* split graphics threads: the VU stage's cycles too */
+        ULONG64 c, cv = 0; QueryThreadCycleTime(GetCurrentThread(), &c);
+        if (g_gst_vu_thread) QueryThreadCycleTime(g_gst_vu_thread, &cv);
+        if (!ft_cyc0) { ft_cyc0 = c; ft_vcyc0 = cv; ft_wall0 = t1; } else { ft_cyc1 = c; ft_vcyc1 = cv; ft_wall1 = t1; ft_cyc_frames++; }
     }
     extern u64 g_gst_idle_ticks; extern int g_log_frames;
     if (!fq_ids[0]) glGenQueries(4, fq_ids);
@@ -1174,6 +1176,8 @@ static void ftimes_report(void) {
     if (!ft_n || !ft_nb) return;
     {   extern u64 g_ft_kind[8]; static const char *nm[6] = { "vif1+vu1", "gif", "vu1 start", "present", "flush", "other" };
         if (ft_cyc_frames) LOG("gs: graphics thread %.2f Mcycles per frame from frame 6500\n", (double)(ft_cyc1 - ft_cyc0) / ft_cyc_frames / 1e6);
+        if (ft_cyc_frames) LOG("gs: %.3f ms wall time per presented frame from frame 6500 (with --turbo: the pipeline's speed)\n", qpc_ms(ft_wall1 - ft_wall0) / ft_cyc_frames);
+        if (ft_cyc_frames && ft_vcyc1) LOG("gs: VU stage %.2f Mcycles per frame from frame 6500 (the line above is the GS stage)\n", (double)(ft_vcyc1 - ft_vcyc0) / ft_cyc_frames / 1e6);
         LOG("gs: graphics thread ms per frame (whole run):");
         for (int k = 0; k < 6; k++) LOG(" %s %.2f", nm[k], qpc_ms(g_ft_kind[k]) / (double)fq_n);
         LOG("\n"); }

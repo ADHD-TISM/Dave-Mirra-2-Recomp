@@ -760,6 +760,16 @@ programs ran (another game, many Dave Mirra 1 runs, YouTube). Findings:
   thread Mcycles per frame (QueryThreadCycleTime, from frame 6500): ~34.4 at
   the end. Under a 16-thread load: slow frames 988-1260 (old) -> 557, audio
   underruns 873-941 -> 378.
+- Two graphics threads (gsthread.c): a VU stage (VIF1 + VU1) and a GS stage
+  (gs.c + OpenGL), linked by a second ring. On the VU stage gs.c
+  gif_transfer forwards (g_on_vu_stage, gst2_gif); path 3 data and PRESENT
+  pass through in queue order. gst_sync and gst_busy cover both rings; the GS
+  stage signals the EE after presents and commands. GS_SPLIT=0 = one thread
+  as before; PROF_GS=1/2 profiles the VU / GS stage. Turbo ride: 8.44 ->
+  5.53 ms wall per frame (min of 4); frames identical, VU_CHECK clean,
+  14000-frame crawl and a Multiplayer crawl clean. Real time under a
+  16-thread load (same build, GS_SPLIT=0 vs on): slow frames 508-530 ->
+  190-299, audio underruns 55-58 -> 12-45.
 - Test runs must set `gamepad = 0`: the user's gamepad fed input into scripted
   runs (wrong menu path, frames differ) and could get vibration from them.
 - Left: VU programs 13 and 4 (vertex transforms) are ~27% of the thread; the

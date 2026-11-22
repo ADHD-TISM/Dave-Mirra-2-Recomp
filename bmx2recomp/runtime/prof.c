@@ -11,9 +11,11 @@
 static u64 keys[NB];
 static u32 counts[NB];
 static HANDLE main_thread;
-/* PROF_GS=1: sample the graphics thread (gsthread.c calls prof_here) instead of the EE thread */
-void prof_here(void) {
-    if (!getenv("PROF_GS") || !getenv("PROF")) return;
+/* PROF_GS=1: sample the graphics thread's VU stage (all of it without GS_SPLIT),
+ * PROF_GS=2 its GS stage, instead of the EE thread (gsthread.c calls prof_here) */
+void prof_here(int stage) {
+    const char *e = getenv("PROF_GS");
+    if (!e || !getenv("PROF") || atoi(e) != stage) return;
     HANDLE h; DuplicateHandle(GetCurrentProcess(), GetCurrentThread(), GetCurrentProcess(), &h, 0, FALSE, DUPLICATE_SAME_ACCESS);
     main_thread = h;
 }
