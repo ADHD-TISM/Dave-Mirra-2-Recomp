@@ -770,6 +770,18 @@ programs ran (another game, many Dave Mirra 1 runs, YouTube). Findings:
   14000-frame crawl and a Multiplayer crawl clean. Real time under a
   16-thread load (same build, GS_SPLIT=0 vs on): slow frames 508-530 ->
   190-299, audio underruns 55-58 -> 12-45.
+- Review fixes (2026-11-22): the frustum hook saves the whole ee state at
+  entry and puts it back before the builder runs and on the odd-FOV bail
+  path (game_tan changed a0, so a bail used to run the builder on a garbage
+  pointer). recomp_vu.py emits no plain pairs if any branch sits in a branch
+  delay slot (none in the current snapshot). The CLUT cache covers CSM1 only
+  (a CSM2 row may lie outside the page whose generation is checked). Ring
+  sleep / wait handshakes use seq_cst fences; the GS stage wakes the EE only
+  when its ring drains (and after each present).
+- Known deviation, unchanged: an UNPACK whose last word has padding bytes
+  decodes elements from them too (S-8 num 5 writes 8 quadwords), in both
+  the byte and bulk paths; hardware writes exactly num. Not fixed: changing
+  it changes output and needs a hardware reference.
 - Test runs must set `gamepad = 0`: the user's gamepad fed input into scripted
   runs (wrong menu path, frames differ) and could get vibration from them.
 - Left: VU programs 13 and 4 (vertex transforms) are ~27% of the thread; the

@@ -133,6 +133,8 @@ def plain_pairs(code, live):
     for p in live:
         lo, hi = w2(p)
         if hi & 0x40000000 and is_branch(*w2((p - 8) & 0x3ff8)): return set()
+        # a branch in a delay slot: the first branch's target runs with bp set
+        if is_branch(lo, hi) and is_branch(*w2((p - 8) & 0x3ff8)): return set()
     return {p for p in live if not special(p) and not special((p - 8) & 0x3ff8)}
 
 CHUNK = 64          # pairs per function

@@ -148,16 +148,19 @@ int ee_hook(u32 a) {
         if (!ee_ptr(cam) || !ee_ptr(cam + 1100)) return 0;
         u16 fov; memcpy(&fov, ee_ptr(cam + 56), 2);
         float h = camf(cam + 28), w = camf(cam + 24);
+        /* game_tan runs game code: it changes a0, v0, temporaries and the cycle count.
+         * Every path below puts the entry state back before the builder runs. */
+        ee_state entry = ee;
         int half = (s16)fov >> 1;                     /* as the game: (fov << 16) >> 17 */
         float t = game_tan(half);
         double wide = atan(t * (4.0 / 3.0)) * (65536.0 / (2 * 3.14159265358979));
         int half_w = (int)(wide + 0.5);
-        if (!(t > 0) || half_w <= half || half_w >= 16384) return 0;   /* odd FOV: leave it alone */
+        if (!(t > 0) || half_w <= half || half_w >= 16384) { ee = entry; return 0; }   /* odd FOV: leave it alone */
         float tw = game_tan(half_w);
         u16 fov_w = (u16)(half_w * 2);
         memcpy(ee_ptr(cam + 56), &fov_w, 2);
         camf_set(cam + 28, h * (t / tw));
-        GD(4) = cam;
+        ee = entry;                                   /* the builder sees its own a0 and registers */
         inner = 1; ee_call(0x00101068); inner = 0;
         memcpy(ee_ptr(cam + 56), &fov, 2);
         camf_set(cam + 28, h);

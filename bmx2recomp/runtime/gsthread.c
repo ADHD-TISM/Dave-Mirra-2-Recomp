@@ -71,8 +71,8 @@ static void ring_wake(ring_t *r) {
 /* the producer waits for the consumer (room, frames, drain): 1 ms timeout, so a missed wake costs 1 ms at most */
 static void ring_wait_space(ring_t *r) {
     ring_wake(r);
-    __atomic_store_n(&r->producer_waiting, 1, __ATOMIC_RELEASE);
-    WaitForSingleObject(r->ev_space, 1);
+    __atomic_store_n(&r->producer_waiting, 1, __ATOMIC_SEQ_CST);
+    WaitForSingleObject(r->ev_space, 1);   /* a wake missed between the caller's check and here costs 1 ms */
     __atomic_store_n(&r->producer_waiting, 0, __ATOMIC_RELEASE);
 }
 static void ring_signal_space(ring_t *r) {
@@ -96,6 +96,7 @@ static void ring_put(ring_t *r, u32 type, u32 a, u32 b, const void *data, u32 le
         memcpy(r->q + pos, &c, sizeof c);
         if (len) memcpy(r->q + pos + sizeof c, data, len);
         st(&r->head, head + need);
+        __atomic_thread_fence(__ATOMIC_SEQ_CST);      /* the head store before the sleeping-flag load */
         ring_wake(r);
         return;
     }
@@ -109,8 +110,8 @@ static int ring_next(ring_t *r, cmd_t *c, const u8 **data, u32 *size, int gs_sta
         int spun = 0;
         while (ld(&r->head) == tail && spun < 2000) { YieldProcessor(); spun++; }
         if (ld(&r->head) == tail) {
-            __atomic_store_n(&r->consumer_sleeping, 1, __ATOMIC_RELEASE);
-            if (ld(&r->head) == tail) {
+            __atomic_store_n(&r->consumer_sleeping, 1, __ATOMIC_SEQ_CST);
+            if (__atomic_load_n(&r->head, __ATOMIC_SEQ_CST) == tail) {
                 LARGE_INTEGER f0; if (g_ft_on && gs_stage) QueryPerformanceCounter(&f0);
                 if (gs_stage) gsgl_flush();
                 LARGE_INTEGER i0, i1; QueryPerformanceCounter(&i0);
@@ -131,6 +132,7 @@ static int ring_next(ring_t *r, cmd_t *c, const u8 **data, u32 *size, int gs_sta
 }
 static void ring_done(ring_t *r, u32 size) {
     st(&r->tail, r->tail + size);
+    __atomic_thread_fence(__ATOMIC_SEQ_CST);          /* the tail store before the waiting-flag load */
     ring_signal_space(r);
 }
 
@@ -190,7 +192,8 @@ static void do_present(const cmd_t *c, const u8 *data) {
         LARGE_INTEGER t1, fq; QueryPerformanceCounter(&t1); QueryPerformanceFrequency(&fq);
         s64 q = (s64)(((u64)c->b << 32) | c->a);
         double wait = (double)(t0.QuadPart - q) * 1000.0 / fq.QuadPart, took = (double)(t1.QuadPart - t0.QuadPart) * 1000.0 / fq.QuadPart;
-        if (wait + took > (getenv("PRESENT_LOG_ALL") ? -1 : 3)) LOG("gst: present at frame %llu: %.1f ms after it was queued, %.1f ms to present\n", (unsigned long long)g_frame, wait, took);
+        static int all = -1; if (all < 0) all = getenv("PRESENT_LOG_ALL") != 0;
+        if (wait + took > (all ? -1 : 3)) LOG("gst: present at frame %llu: %.1f ms after it was queued, %.1f ms to present\n", (unsigned long long)g_frame, wait, took);
     }
 }
 static void ft_add(int k, LARGE_INTEGER k0) {
@@ -208,7 +211,7 @@ static DWORD WINAPI vu_stage(void *arg) {
         cmd_t c; const u8 *data; u32 size;
         if (!ring_next(&r1, &c, &data, &size, !split)) continue;
         LARGE_INTEGER k0; if (g_ft_on) QueryPerformanceCounter(&k0);
-        int k = 5;
+        int k = split ? 6 : 5;                    /* 6: the VU stage's "other" (not reported), so the stages never share a counter */
         switch (c.type) {
         case C_WRAP: break;
         case C_VIF1: vif1_worker_feed(data, c.len / 16); k = 0; break;
@@ -243,7 +246,10 @@ static DWORD WINAPI gs_stage(void *arg) {
         }
         if (g_ft_on) ft_add(k, k0);
         ring_done(&r2, size);
-        ring_signal_space(&r1);                   /* gst_sync on the EE waits for this ring too */
+        if (r2.tail == ld(&r2.head)) {            /* drained: gst_sync on the EE waits for this ring too */
+            __atomic_thread_fence(__ATOMIC_SEQ_CST);
+            ring_signal_space(&r1);
+        }
     }
     return 0;
 }

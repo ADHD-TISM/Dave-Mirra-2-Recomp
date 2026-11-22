@@ -48,35 +48,32 @@ static void clut_load(u64 tex0) {
     int n = (psm == PSMT8 || psm == PSMT8H) ? 256 : 16;
     int c16 = (cpsm == PSMCT16 || cpsm == PSMCT16S);
     gsgl_sync_vram(cbp, cbp + 31);
-    {   /* the entries read for this CLUT source, cached until its VRAM page changes
-         * (gsgl_vram_gen: host writes and target write-backs bump it) */
+    if (csm == 0) {   /* CSM1: the entries read for this CLUT source, cached until its VRAM
+         * page changes (gsgl_vram_gen: host writes and target write-backs bump it). The
+         * 16x16 / 8x2 CLUT lies inside cbp..cbp+31; a CSM2 row may not, so it is read each time. */
         extern u32 gsgl_vram_gen(u32 b0, u32 b1);
-        static struct { u32 cbp, cpsm, csm, n, tc, gen, used; u64 stamp; u32 v[256]; } cc[32];
+        static struct { u32 cbp, cpsm, n, gen, used; u64 stamp; u32 v[256]; } cc[32];
         static u64 clock;
-        u32 tc = csm ? (u32)(R[TEXCLUT] & 0x3fffff) : 0, gen = gsgl_vram_gen(cbp, cbp + 31);
+        u32 gen = gsgl_vram_gen(cbp, cbp + 31);
         int k, hit = -1, lru = 0;
         for (k = 0; k < 32; k++) {
-            if (cc[k].used && cc[k].cbp == cbp && cc[k].cpsm == cpsm && cc[k].csm == csm && cc[k].n == (u32)n && cc[k].tc == tc) { hit = k; break; }
+            if (cc[k].used && cc[k].cbp == cbp && cc[k].cpsm == cpsm && cc[k].n == (u32)n) { hit = k; break; }
             if (!cc[k].used || cc[k].stamp < cc[lru].stamp) lru = k;
         }
         if (hit < 0 || cc[hit].gen != gen) {
             k = hit >= 0 ? hit : lru;
-            cc[k].used = 1; cc[k].cbp = cbp; cc[k].cpsm = cpsm; cc[k].csm = csm; cc[k].n = (u32)n; cc[k].tc = tc; cc[k].gen = gen;
-            if (csm == 0) {
-                int w = n == 256 ? 16 : 8;
-                for (int i = 0; i < n; i++) {
-                    int p = n == 256 ? ((i & 0xe7) | ((i & 0x08) << 1) | ((i & 0x10) >> 1)) : i;
-                    cc[k].v[i] = gs_read_pixel(c16 ? cpsm : PSMCT32, cbp, 1, p % w, p / w);
-                }
-            } else {
-                u32 cbw = F(tc, 0, 6), cou = F(tc, 6, 6) * 16, cov = F(tc, 12, 10);
-                for (int i = 0; i < n; i++) cc[k].v[i] = gs_read_pixel(cpsm, cbp, cbw, cou + i, cov);
+            cc[k].used = 1; cc[k].cbp = cbp; cc[k].cpsm = cpsm; cc[k].n = (u32)n; cc[k].gen = gen;
+            /* 16x16 (8x2 for 4-bit) pixels; T8 entries have bits 3 and 4 swapped */
+            int w = n == 256 ? 16 : 8;
+            for (int i = 0; i < n; i++) {
+                int p = n == 256 ? ((i & 0xe7) | ((i & 0x08) << 1) | ((i & 0x10) >> 1)) : i;
+                cc[k].v[i] = gs_read_pixel(c16 ? cpsm : PSMCT32, cbp, 1, p % w, p / w);
             }
         }
         cc[k].stamp = ++clock;
         const u32 *src = cc[k].v; int changed = 0;
         for (int i = 0; i < n; i++) {
-            if (csm || c16) {
+            if (c16) {
                 u16 *d = &clut[(csa * 16 + i) & 511];
                 if (*d != (u16)src[i]) { *d = (u16)src[i]; changed = 1; }
             } else {
@@ -92,22 +89,7 @@ static void clut_load(u64 tex0) {
         }
         return;
     }
-    if (csm == 0) {
-        /* CSM1: 16x16 (8x2 for 4-bit) pixels; T8 entries have bits 3 and 4 swapped */
-        int w = n == 256 ? 16 : 8;
-        for (int i = 0; i < n; i++) {
-            int p = n == 256 ? ((i & 0xe7) | ((i & 0x08) << 1) | ((i & 0x10) >> 1)) : i;
-            u32 x = p % w, y = p / w;
-            if (c16) {
-                u32 v = gs_read_pixel(cpsm, cbp, 1, x, y);
-                clut[(csa * 16 + i) & 511] = (u16)v;
-            } else {
-                u32 v = gs_read_pixel(PSMCT32, cbp, 1, x, y);
-                u32 o = (csa & 15) * 16 + i;
-                clut[o & 255] = (u16)v; clut[256 + (o & 255)] = (u16)(v >> 16);
-            }
-        }
-    } else {
+    {
         /* CSM2: a line of 256 entries at TEXCLUT (CBW, COU, COV), CT16 only */
         u64 tc = R[TEXCLUT];
         u32 cbw = F(tc, 0, 6), cou = F(tc, 6, 6) * 16, cov = F(tc, 12, 10);

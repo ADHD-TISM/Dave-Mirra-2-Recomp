@@ -552,7 +552,7 @@ void vu_init(void) { vu_setup(); }
 void vu_micro_run(int vu, u32 pc) { vu_run(vu ? 1 : 0, pc); }
 
 void vu_stats(void) {
-    LOG("vu: vu0 %llu runs %llu pairs, vu1 %llu runs %llu pairs\n", (unsigned long long)VU[0].runs,
+    LOG("vu: vu0 %llu runs %llu pairs, vu1 %llu runs %llu interpreted pairs\n", (unsigned long long)VU[0].runs,
         (unsigned long long)VU[0].pairs, (unsigned long long)VU[1].runs, (unsigned long long)VU[1].pairs);
     LOG("vu: vu1 %llu recompiled runs, %llu checked, %llu mismatches\n", (unsigned long long)n_rec_runs,
         (unsigned long long)n_check_runs, (unsigned long long)n_check_bad);
