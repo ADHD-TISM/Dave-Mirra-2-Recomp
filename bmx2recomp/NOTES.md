@@ -739,8 +739,9 @@ not a skip: the game then calls a null method.
 - iop.c: one ZCDDVD open check feeds skip_intro and --no-movies.
 - Exit stop: no race. WM_CLOSE is dispatched by gsgl_pump from gs_vsync
   (kernel.c vblank), on the EE thread, just before pad_vsync; exit() runs the
-  atexit rumble_stop_all on that thread, so no rumble_send can follow it. Only
-  a crash or a killed process skips the stop.
+  atexit rumble_stop_all on that thread, so no rumble_send can follow it. Not
+  covered: a crash, a killed process, and the GS worker's fatal exit(6)
+  (gsthread.c), which runs the stop on its own thread while the EE thread goes on.
 - Multiplayer re-crawled after the pad protocol change (all 14 games, both
   players scripted, player 2 pad opened on port 1): every game rides, name
   entry and result menus show, exit 0, no missing code, 0 VU1 mismatches.
