@@ -165,7 +165,7 @@ static inline void ee_fentry(u32 a) {
 #else
 #define FENTRY(a) ((void)0)
 #endif
-void ee_hook(u32 a);   /* main.c: called at the entry of tools/recomp_ee.py HOOKS functions */
+int ee_hook(u32 a);    /* main.c: called at the entry of tools/recomp_ee.py HOOKS functions; nonzero = return at once */
 #define CYC(n)  do { ee.cycles += (n); if (ee.cycles >= ee.next_event) ee_event(); } while (0)
 #define CYCF(n) CYC(n)
 

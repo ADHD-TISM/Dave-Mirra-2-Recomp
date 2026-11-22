@@ -696,6 +696,24 @@ same subject size, more scene at both sides, nothing missing at the edges.
 The 2D HUD and menus are stretched (not corrected). Changing recomp_ee.py
 changes the launcher's regen key, so installs regenerate gen/ once.
 
+Culling at the 16:9 sides (fixed 2026-11-21, user: walls, windows, doors
+popping in and out and going light/dark in Woodward, gone with widescreen
+off). fn 1017e0 (camera update) calls fn 101570 (projection, uses cam+68/72)
+then fn 101068, the view frustum builder: tan x = tan(fov/2) from the FOV
+angle cam+56 (fn 127940 = the game's tan of a 16-bit angle), focal
+cam+1096 = (w/2)/tan x (w, h = cam+24/+28), tan y = (h/2)/focal; it writes
+cam-space planes at +608 (6, count +592), 8 corners at +704 (x = +-near or
+far * tan x), then world planes / corners (+848, +944). It never sees the
+aspect hook, so the cull volume stayed 4:3. HOOKS now include 0x101068 and a
+hook returning nonzero skips the body: with widescreen, ee_hook runs the
+builder itself with a FOV whose tan is 4/3 wider and h scaled by
+tan / tan_wide (tan y unchanged), then restores cam+56, cam+28 and the
+original focal cam+1096 (read by fn 101570 and copied to the draw state at
+0x1fa600 + 704). Checked: A/B at the same frame differs only in the right
+1/8 of the picture, where the old build left a ground piece out; a 12000
+frame widescreen crawl ran clean. GS_SHOT_FROM / GS_SHOT_TO=<frame> limit
+GS_SHOT to a frame range.
+
 ## Anti-aliasing: area-filter present (2026-11-21)
 MSAA was not added: the shadow volumes count layers with exact per-pixel
 wrap (COLCLAMP 0 + FBMSK merge), which a multisample resolve would average,

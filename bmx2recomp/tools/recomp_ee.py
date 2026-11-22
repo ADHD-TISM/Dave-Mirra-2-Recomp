@@ -425,8 +425,9 @@ def cond(i):
     raise ValueError(hex(i.w))
 
 # functions that start with a call to the runtime's ee_hook(addr) (runtime/main.c),
-# which may adjust their arguments: 0x11dfd0 camera aspect setter (widescreen)
-HOOKS = {0x0011dfd0}
+# which may adjust their arguments or run the body itself (a nonzero return skips it):
+# 0x11dfd0 camera aspect setter, 0x101068 view frustum builder (both widescreen)
+HOOKS = {0x0011dfd0, 0x00101068}
 
 def callexpr(t, entries):
     if t in entries: return f'f_{t:08x}();'
@@ -434,7 +435,7 @@ def callexpr(t, entries):
 
 def gen_func(exe, f, entries, out):
     a0 = f.entry
-    out.append(f'void f_{a0:08x}(void) {{ FENTRY(0x{a0:08x}u);' + (f' ee_hook(0x{a0:08x}u);' if a0 in HOOKS else ''))
+    out.append(f'void f_{a0:08x}(void) {{ FENTRY(0x{a0:08x}u);' + (f' if (ee_hook(0x{a0:08x}u)) return;' if a0 in HOOKS else ''))
     addrs = sorted(f.addrs); aset = f.addrs
     needed = set(t for t in f.labels if t in aset)
     if addrs and addrs[0] != a0:

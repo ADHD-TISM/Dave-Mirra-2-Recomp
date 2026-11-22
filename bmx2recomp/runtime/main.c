@@ -2,6 +2,7 @@
 #include "rt.h"
 #include "config.h"
 #include <stdlib.h>
+#include <math.h>
 #include <windows.h>
 
 ee_state ee;
@@ -120,12 +121,51 @@ static void trace_dump(void) {}
 
 /* entry hooks: tools/recomp_ee.py emits ee_hook(addr) at the start of the
  * functions in its HOOKS set, so the runtime can adjust arguments */
-void ee_hook(u32 a) {
+static float camf(u32 a) { float v; memcpy(&v, ee_ptr(a), 4); return v; }
+static void camf_set(u32 a, float v) { memcpy(ee_ptr(a), &v, 4); }
+
+/* the game's tan of a 16-bit angle (fn 127940: its sin / cos tables) */
+static float game_tan(int half) {
+    GD(4) = (u64)(s64)half; ee_call(0x00127940);
+    return ee.fpr[0].f;
+}
+
+int ee_hook(u32 a) {
     switch (a) {
     case 0x0011dfd0:   /* camera aspect setter (cam+68 = f12 x, cam+72 = f13 y), from fn 100ad0 values */
         if (g_cfg.widescreen) ee.fpr[12].f *= 0.75f;   /* Hor+: same height, 4/3 wider view */
         break;
+    case 0x00101068: { /* view frustum builder (a0 = cam), called by fn 1017e0 each frame */
+        /* It builds the cull planes and corners from the FOV angle cam+56 (16-bit, 65536 = 360
+         * deg) and the screen size cam+24/+28: tan x = tan(fov/2), tan y = tan x * h / w. It
+         * does not see the widescreen aspect above, so objects at the sides of the 16:9 view
+         * were culled and popped in and out. Widescreen: run it with a FOV whose tan is 4/3
+         * wider and h scaled to keep tan y, then put back fov, h and the focal length cam+1096
+         * (read by the projection fn 101570 and copied to the draw state). */
+        static int inner;
+        if (!g_cfg.widescreen || inner) return 0;
+        u32 cam = GW(4) & 0x1ffffff;
+        if (!ee_ptr(cam) || !ee_ptr(cam + 1100)) return 0;
+        u16 fov; memcpy(&fov, ee_ptr(cam + 56), 2);
+        float h = camf(cam + 28), w = camf(cam + 24);
+        int half = (s16)fov >> 1;                     /* as the game: (fov << 16) >> 17 */
+        float t = game_tan(half);
+        double wide = atan(t * (4.0 / 3.0)) * (65536.0 / (2 * 3.14159265358979));
+        int half_w = (int)(wide + 0.5);
+        if (!(t > 0) || half_w <= half || half_w >= 16384) return 0;   /* odd FOV: leave it alone */
+        float tw = game_tan(half_w);
+        u16 fov_w = (u16)(half_w * 2);
+        memcpy(ee_ptr(cam + 56), &fov_w, 2);
+        camf_set(cam + 28, h * (t / tw));
+        GD(4) = cam;
+        inner = 1; ee_call(0x00101068); inner = 0;
+        memcpy(ee_ptr(cam + 56), &fov, 2);
+        camf_set(cam + 28, h);
+        camf_set(cam + 1096, (w * 0.5f) / t);         /* the game's own focal length for fov */
+        return 1;
     }
+    }
+    return 0;
 }
 
 static void on_exit_report(void) { trace_dump(); fflush(stdout); fflush(stderr); }

@@ -1106,7 +1106,7 @@ void gsgl_vram_written(u32 psm, u32 bp, u32 bw, u32 x, u32 y, u32 w, u32 h) {
 }
 
 /* ---- presentation ------------------------------------------------------------- */
-static const char *shot_dir; static int shot_every = 30; static u64 shot_frame;
+static const char *shot_dir; static int shot_every = 30; static u64 shot_frame, shot_from, shot_to = ~0ull;
 static void write_shot(const u32 *pix, u32 w, u32 h) {
     char name[512];
     snprintf(name, sizeof name, "%s/gs_%05llu_%ux%u.ppm", shot_dir, (unsigned long long)shot_frame, w, h);
@@ -1127,7 +1127,7 @@ static void present_rect_(u32 fbp, u32 fbw, u32 psm, u32 dbx, u32 dby, u32 w, u3
     gsgl_flush();
     async_issue_all();   /* this frame's texture-read rows: read back without waiting, used next frame */
     shot_frame++;
-    int shot = shot_dir && shot_frame % shot_every == 0;
+    int shot = shot_dir && shot_frame % shot_every == 0 && g_frame >= shot_from && g_frame <= shot_to;
     GLuint src = 0; float u0 = 0, v0 = 0, u1 = 0, v1 = 0;
     if (fbw && w && h && w <= 2048 && h <= 2048) {
         u32 yoff = 0;
@@ -1284,6 +1284,9 @@ int gsgl_init(int show_window, int scale) {
     shot_dir = getenv("GS_SHOT");
     if (getenv("GS_SHOT_EVERY")) shot_every = atoi(getenv("GS_SHOT_EVERY"));
     if (shot_every < 1) shot_every = 1;
+    /* GS_SHOT_FROM / GS_SHOT_TO=<frame>: only shoot inside that frame range */
+    if (getenv("GS_SHOT_FROM")) shot_from = strtoull(getenv("GS_SHOT_FROM"), 0, 10);
+    if (getenv("GS_SHOT_TO")) shot_to = strtoull(getenv("GS_SHOT_TO"), 0, 10);
 
     WNDCLASSA wc = { 0 };
     wc.lpfnWndProc = wndproc; wc.hInstance = GetModuleHandleA(NULL);
