@@ -817,6 +817,18 @@ programs ran (another game, many Dave Mirra 1 runs, YouTube). Findings:
     build) the game took another path (fewer VU runs, other key-ons, other
     poll skip counts) with no error in the log; it did not come back in the
     next 30 runs of that and later builds. Cause not known.
+- GS stage round (2026-11-22), same benchmark, median of 4: GS stage work
+  0.855 -> 0.73 ms per frame. draw_prim keeps the decoded gs_draw_state per
+  class until st_gen moves (every register write that is not vertex data:
+  RGBAQ ST UV XYZ* FOG; and every CLUT change), and tells gsgl_draw when the
+  state is the one it passed last time, so the 240-byte memcmp is skipped.
+  clut_load skips the 256-entry compare when the cached CSM1 source was the
+  last thing applied at the same CSA (clut_ver). fu_count (GS_FEATURES stats)
+  only runs when they are reported. The texture cache looks up a hint by key
+  hash before its 512-entry scan. Frames identical; crawl screenshots too.
+- In turbo the wall time is the whole pipeline's: the EE may be at most 2
+  frames ahead of the GS stage (gst_present), so the EE, VU and GS stages
+  all wait part of the time and any stage's speed-up shows.
 
 ## Next step (recommended, 2026-11-22)
 1. Playtest further; add missing code from any message box. Every level now

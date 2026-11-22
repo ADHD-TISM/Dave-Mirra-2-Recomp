@@ -31,6 +31,10 @@ static float cur_q = 1.0f;
 /* ---- CLUT buffer: 512 halfwords; CT32 entries keep their high half at +256 */
 static u16 clut[512];
 static u32 clut_hash, cbp0, cbp1;
+/* bumped by every register write that is not vertex data and by CLUT changes:
+   draw_prim reuses its decoded state until then */
+static u32 st_gen = 1;
+static u32 clut_ver = 1;      /* bumped whenever clut[] changes */
 
 static void clut_load(u64 tex0) {
     u32 psm = F(tex0, 20, 6), cbp = F(tex0, 37, 14), cpsm = F(tex0, 51, 4), csm = F(tex0, 55, 1);
@@ -52,7 +56,9 @@ static void clut_load(u64 tex0) {
          * page changes (gsgl_vram_gen: host writes and target write-backs bump it). The
          * 16x16 / 8x2 CLUT lies inside cbp..cbp+31; a CSM2 row may not, so it is read each time. */
         extern u32 gsgl_vram_gen(u32 b0, u32 b1);
-        static struct { u32 cbp, cpsm, n, gen, used; u64 stamp; u32 v[256]; } cc[32];
+        /* applied_ver / applied_csa: clut[] was not changed since this entry was
+           applied there, so applying it again changes nothing */
+        static struct { u32 cbp, cpsm, n, gen, used, applied_ver, applied_csa, applied_c16; u64 stamp; u32 v[256]; } cc[32];
         static u64 clock;
         u32 gen = gsgl_vram_gen(cbp, cbp + 31);
         int k, hit = -1, lru = 0;
@@ -62,7 +68,7 @@ static void clut_load(u64 tex0) {
         }
         if (hit < 0 || cc[hit].gen != gen) {
             k = hit >= 0 ? hit : lru;
-            cc[k].used = 1; cc[k].cbp = cbp; cc[k].cpsm = cpsm; cc[k].n = (u32)n; cc[k].gen = gen;
+            cc[k].used = 1; cc[k].cbp = cbp; cc[k].cpsm = cpsm; cc[k].n = (u32)n; cc[k].gen = gen; cc[k].applied_ver = 0;
             /* 16x16 (8x2 for 4-bit) pixels; T8 entries have bits 3 and 4 swapped */
             int w = n == 256 ? 16 : 8;
             for (int i = 0; i < n; i++) {
@@ -71,6 +77,7 @@ static void clut_load(u64 tex0) {
             }
         }
         cc[k].stamp = ++clock;
+        if (cc[k].applied_ver == clut_ver && cc[k].applied_csa == csa && cc[k].applied_c16 == (u32)c16) return;
         const u32 *src = cc[k].v; int changed = 0;
         for (int i = 0; i < n; i++) {
             if (c16) {
@@ -85,8 +92,9 @@ static void clut_load(u64 tex0) {
         if (changed) {
             u32 h = 2166136261u;
             for (int i = 0; i < 512; i++) h = (h ^ clut[i]) * 16777619u;
-            clut_hash = h;
+            clut_hash = h; st_gen++; clut_ver++;
         }
+        cc[k].applied_ver = clut_ver; cc[k].applied_csa = csa; cc[k].applied_c16 = (u32)c16;
         return;
     }
     {
@@ -97,7 +105,7 @@ static void clut_load(u64 tex0) {
     }
     u32 h = 2166136261u;
     for (int i = 0; i < 512; i++) h = (h ^ clut[i]) * 16777619u;
-    clut_hash = h;
+    clut_hash = h; st_gen++; clut_ver++;
 }
 
 /* ---- texture decode for the back end ------------------------------------- */
@@ -243,6 +251,7 @@ static u32 cur_prim(void) { return F(R[PRIM], 0, 3); }
 static u32 attrs(void) { return (R[PRMODECONT] & 1) ? (u32)R[PRIM] : (u32)R[PRMODE]; }
 
 /* GS feature use, logged at exit with --log-gs or GS_FEATURES=1 (which "not done" parts matter) */
+static int fu_on;   /* GS_FEATURES or GS logging: count features per primitive */
 static u64 fu_n, fu_date, fu_dthe, fu_noclamp, fu_ad, fu_fixhi, fu_pabe, fu_fba, fu_abe, fu_ad_d, fu_zread;
 static void fu_report(void) {
     LOG("gs: features in %llu prims: blend %llu, Ad factor %llu, FIX>0x80 %llu, Ad as A/B/D %llu, DATE %llu, dither %llu, "
@@ -328,7 +337,7 @@ static void build_state(gs_draw_state *st, int cls, u32 a) {
     st->scx0 = F(sc, 0, 11); st->scx1 = F(sc, 16, 11); st->scy0 = F(sc, 32, 11); st->scy1 = F(sc, 48, 11);
     st->colclamp = R[COLCLAMP] & 1;
     st->dthe = R[DTHE] & 1;
-    fu_count(st);
+    if (fu_on) fu_count(st);
 }
 
 static void to_vertex(gs_vertex *o, const qvert *q, const qvert *col, u32 a, const gs_draw_state *st) {
@@ -352,37 +361,50 @@ static void to_vertex(gs_vertex *o, const qvert *q, const qvert *col, u32 a, con
     o->fog = q->f / 255.0f;
 }
 
+/* the draw state for class cls (1 lines, 2 the rest) under attributes a:
+   decoded again only after st_gen moved (a register or the CLUT changed).
+   *same: it is the state the previous draw passed, so gsgl_draw may skip its compare */
+static const gs_draw_state *get_state(int cls, u32 a, int *same) {
+    static gs_draw_state cache[3]; static u32 gen[3], attr[3], id[3], next_id, last_id;
+    if (gen[cls] != st_gen || attr[cls] != a) {
+        build_state(&cache[cls], cls, a);
+        gen[cls] = st_gen; attr[cls] = a; id[cls] = ++next_id;
+    } else if (fu_on) fu_count(&cache[cls]);
+    *same = id[cls] == last_id;
+    last_id = id[cls];
+    return &cache[cls];
+}
+
 static void draw_prim(int type) {
     u32 a = attrs();
     gs_vertex v[6];
-    gs_draw_state st;
-    int iip = (a >> 3) & 1;
+    int iip = (a >> 3) & 1, same;
     n_prims++;
     switch (type) {
     case 0: {   /* point -> 1x1 quad */
-        build_state(&st, 2, a);
-        gs_vertex p; to_vertex(&p, &vq[0], &vq[0], a, &st);
+        const gs_draw_state *st = get_state(2, a, &same);
+        gs_vertex p; to_vertex(&p, &vq[0], &vq[0], a, st);
         for (int k = 0; k < 6; k++) v[k] = p;
         v[1].x += 1; v[2].y += 1; v[3].x += 1; v[4].x += 1; v[4].y += 1; v[5].y += 1;
-        gsgl_draw(&st, v, 6);
+        gsgl_draw(st, v, 6, same);
         break; }
     case 1: case 2: {
-        build_state(&st, 1, a);
-        to_vertex(&v[0], &vq[0], iip ? &vq[0] : &vq[1], a, &st);
-        to_vertex(&v[1], &vq[1], &vq[1], a, &st);
-        gsgl_draw(&st, v, 2);
+        const gs_draw_state *st = get_state(1, a, &same);
+        to_vertex(&v[0], &vq[0], iip ? &vq[0] : &vq[1], a, st);
+        to_vertex(&v[1], &vq[1], &vq[1], a, st);
+        gsgl_draw(st, v, 2, same);
         break; }
     case 3: case 4: case 5: {
-        build_state(&st, 2, a);
-        for (int k = 0; k < 3; k++) to_vertex(&v[k], &vq[k], iip ? &vq[k] : &vq[2], a, &st);
-        gsgl_draw(&st, v, 3);
+        const gs_draw_state *st = get_state(2, a, &same);
+        for (int k = 0; k < 3; k++) to_vertex(&v[k], &vq[k], iip ? &vq[k] : &vq[2], a, st);
+        gsgl_draw(st, v, 3, same);
         break; }
     case 6: {   /* sprite: corners from two vertices, colour/Z/fog from the second */
-        build_state(&st, 2, a);
+        const gs_draw_state *st = get_state(2, a, &same);
         gs_vertex p0, p1;
-        to_vertex(&p0, &vq[0], &vq[1], a, &st);
-        to_vertex(&p1, &vq[1], &vq[1], a, &st);
-        if (!st.fst) {   /* no perspective on a sprite: divide now */
+        to_vertex(&p0, &vq[0], &vq[1], a, st);
+        to_vertex(&p1, &vq[1], &vq[1], a, st);
+        if (!st->fst) {   /* no perspective on a sprite: divide now */
             p0.s /= p0.q; p0.t /= p0.q; p1.s /= p1.q; p1.t /= p1.q; p0.q = p1.q = 1.0f;
         }
         p0.z = p1.z; p0.fog = p1.fog;
@@ -390,7 +412,7 @@ static void draw_prim(int type) {
         tr.x = p1.x; tr.s = p1.s;
         bl.y = p1.y; bl.t = p1.t;
         v[0] = p0; v[1] = tr; v[2] = bl; v[3] = tr; v[4] = p1; v[5] = bl;
-        gsgl_draw(&st, v, 6);
+        gsgl_draw(st, v, 6, same);
         break; }
     default:
         break;
@@ -421,6 +443,7 @@ static void vertex_kick(u32 x, u32 y, u32 z, u32 f, int kick) {
 /* ---- register writes ----------------------------------------------------- */
 static void gs_write_reg(u32 r, u64 v) {
     r &= 0x7f;
+    if (r != RGBAQ && r != ST && r != UV && r != XYZF2 && r != XYZF3 && r != XYZ2 && r != XYZ3 && r != FOG) st_gen++;
     switch (r) {
     case PRIM: R[PRIM] = v; nvq = 0; return;
     case XYZF2: case XYZF3:
@@ -573,6 +596,6 @@ void gs_vsync(void) {
 
 void gs_init(int show_window, int scale) {
     R[PRMODECONT] = 1;
-    if (g_log_gs || getenv("GS_FEATURES")) atexit(fu_report);
+    if (g_log_gs || getenv("GS_FEATURES")) { fu_on = 1; atexit(fu_report); }
     if (!gsgl_init(show_window, scale)) { LOG("gs: OpenGL 3.3 initialisation failed\n"); exit(5); }
 }

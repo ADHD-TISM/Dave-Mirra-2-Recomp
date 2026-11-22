@@ -58,7 +58,7 @@ typedef struct {            /* everything a batch shares; memcmp'd to merge */
 
 /* gs_gl.c */
 int  gsgl_init(int show_window, int scale);
-void gsgl_draw(const gs_draw_state *st, const gs_vertex *v, u32 n);   /* n vertices, prim from st */
+void gsgl_draw(const gs_draw_state *st, const gs_vertex *v, u32 n, int same);   /* n vertices, prim from st; same: st is what the previous call passed */
 void gsgl_flush(void);
 /* local memory was written by the host (or a local->local copy): blocks [b0, b1] */
 void gsgl_vram_written(u32 psm, u32 bp, u32 bw, u32 x, u32 y, u32 w, u32 h);

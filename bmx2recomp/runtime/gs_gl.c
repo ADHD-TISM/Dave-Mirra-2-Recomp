@@ -590,18 +590,35 @@ static tcache tc[NTC];
 static u64 tc_clock, n_decodes;
 
 static void sync_for_texture(u32 b0, u32 b1);
+#define TC_KEY_EQ(e, s) ((e)->tbp == (s)->tbp && (e)->tbw == (s)->tbw && (e)->tpsm == (s)->tpsm && (e)->tw == (s)->tw && \
+    (e)->th == (s)->th && (e)->cbp == (s)->cbp && (e)->cpsm == (s)->cpsm && (e)->csa == (s)->csa && \
+    (e)->clut_hash == (s)->clut_hash && (e)->ta0 == (s)->ta0 && (e)->ta1 == (s)->ta1 && (e)->aem == (s)->aem)
+/* hint: the entry a key's hash found last time. A key has at most one entry
+ * (a match is decoded in place), so a matching hint is what the scan finds. */
+static u16 tc_hint[1024];
 static GLuint texture_from_memory(const gs_draw_state *s) {
     u32 b0, b1; gs_rect_blocks(s->tpsm, s->tbp, s->tbw, 0, 0, 1u << s->tw, 1u << s->th, &b0, &b1);
     sync_for_texture(b0, b1);
     u32 g = gen_of(b0, b1);
+    u32 hk = s->tbp * 2654435761u ^ s->tbw * 40503u ^ s->tpsm * 97u ^ s->tw * 13u ^ s->th * 7u ^ s->cbp * 2246822519u ^
+             s->cpsm * 31u ^ s->csa * 101u ^ s->clut_hash ^ s->ta0 * 3u ^ s->ta1 * 5u ^ s->aem * 11u;
+    hk = (hk ^ (hk >> 15)) & 1023;
     tcache *free_e = 0, *old = &tc[0];
+    {
+        tcache *e = &tc[tc_hint[hk]];
+        if (e->used && TC_KEY_EQ(e, s)) {
+            e->stamp = ++tc_clock;
+            if (e->gen == g) return e->tex;
+            old = e;
+            goto decode;
+        }
+    }
     for (int i = 0; i < NTC; i++) {
         tcache *e = &tc[i];
         if (!e->used) { if (!free_e) free_e = e; continue; }
-        if (e->tbp == s->tbp && e->tbw == s->tbw && e->tpsm == s->tpsm && e->tw == s->tw && e->th == s->th &&
-            e->cbp == s->cbp && e->cpsm == s->cpsm && e->csa == s->csa && e->clut_hash == s->clut_hash &&
-            e->ta0 == s->ta0 && e->ta1 == s->ta1 && e->aem == s->aem) {
+        if (TC_KEY_EQ(e, s)) {
             e->stamp = ++tc_clock;
+            tc_hint[hk] = (u16)i;
             if (e->gen == g) return e->tex;
             old = e; free_e = 0;   /* same texture, stale: decode into it */
             goto decode;
@@ -609,6 +626,7 @@ static GLuint texture_from_memory(const gs_draw_state *s) {
         if (e->stamp < old->stamp) old = e;
     }
     if (free_e) old = free_e;
+    tc_hint[hk] = (u16)(old - tc);
 decode:;
     tcache *e = old;
     u32 w = 1u << s->tw, h = 1u << s->th;
@@ -678,8 +696,9 @@ static GLint vbo_put(const gs_vertex *v, u32 n) {
     return first;
 }
 
-void gsgl_draw(const gs_draw_state *st, const gs_vertex *v, u32 n) {
-    if (have && (nv + n > MAXV || memcmp(st, &cur, sizeof cur))) gsgl_flush();
+void gsgl_draw(const gs_draw_state *st, const gs_vertex *v, u32 n, int same) {
+    /* same: cur already holds st (only gsgl_draw sets cur, from the state passed) */
+    if (have && (nv + n > MAXV || (!same && memcmp(st, &cur, sizeof cur)))) gsgl_flush();
     if (!have) { cur = *st; have = 1; }
     memcpy(vb + nv, v, n * sizeof *v);
     nv += n;
