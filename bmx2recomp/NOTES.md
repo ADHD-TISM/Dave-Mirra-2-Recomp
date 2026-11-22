@@ -737,6 +737,10 @@ not a skip: the game then calls a null method.
   bmx2_cfg field used to leave gs_gl.o/main.o with old offsets in dev builds;
   the launcher's build already hashes every header).
 - iop.c: one ZCDDVD open check feeds skip_intro and --no-movies.
+- Exit stop: no race. WM_CLOSE is dispatched by gsgl_pump from gs_vsync
+  (kernel.c vblank), on the EE thread, just before pad_vsync; exit() runs the
+  atexit rumble_stop_all on that thread, so no rumble_send can follow it. Only
+  a crash or a killed process skips the stop.
 - Multiplayer re-crawled after the pad protocol change (all 14 games, both
   players scripted, player 2 pad opened on port 1): every game rides, name
   entry and result menus show, exit 0, no missing code, 0 VU1 mismatches.
