@@ -31,6 +31,10 @@ static volatile LONG worker_sleeping, ee_waiting;
 static volatile u32 csr_pending;
 static HANDLE ev_work, ev_space;
 static u64 n_cmds, n_bytes, n_waits_full, n_waits_frames, n_syncs;
+u64 g_gst_idle_ticks;
+/* GS_FRAME_TIMES (gs_gl.c sets g_ft_on): worker time by command kind, in QPC ticks */
+int g_ft_on;
+u64 g_ft_kind[8];   /* 0 vif1 (VU1 runs inside), 1 gif, 2 vu1 start, 3 present, 4 flush before sleep, 5 other */   /* QPC ticks the worker slept with an empty queue (GS_FRAME_TIMES, gs_gl.c) */
 
 /* worker side, in vif.c / gs.c / gs_gl.c / vu.c */
 u32 vif1_worker_feed(const u8 *p, u32 nqw);
@@ -125,7 +129,14 @@ static DWORD WINAPI worker(void *arg) {
             while (ld(&q_head) == tail && spun < 2000) { YieldProcessor(); spun++; }
             if (ld(&q_head) == tail) {
                 __atomic_store_n(&worker_sleeping, 1, __ATOMIC_RELEASE);
-                if (ld(&q_head) == tail) { gsgl_flush(); WaitForSingleObject(ev_work, 5); }
+                if (ld(&q_head) == tail) {
+                    LARGE_INTEGER f0; if (g_ft_on) QueryPerformanceCounter(&f0);
+                    gsgl_flush();
+                    LARGE_INTEGER i0, i1; QueryPerformanceCounter(&i0);
+                    if (g_ft_on) g_ft_kind[4] += (u64)(i0.QuadPart - f0.QuadPart);
+                    WaitForSingleObject(ev_work, 5);
+                    QueryPerformanceCounter(&i1); g_gst_idle_ticks += (u64)(i1.QuadPart - i0.QuadPart);
+                }
                 __atomic_store_n(&worker_sleeping, 0, __ATOMIC_RELEASE);
             }
             continue;
@@ -134,6 +145,7 @@ static DWORD WINAPI worker(void *arg) {
         cmd_t c; memcpy(&c, q + pos, sizeof c);
         const u8 *data = q + pos + sizeof c;
         u32 size = (u32)sizeof(cmd_t) + ((c.len + 15) & ~15u);
+        LARGE_INTEGER k0; if (g_ft_on) QueryPerformanceCounter(&k0);
         switch (c.type) {
         case C_WRAP: size = QSIZE - pos; break;
         case C_VIF1: vif1_worker_feed(data, c.len / 16); break;
@@ -153,6 +165,11 @@ static DWORD WINAPI worker(void *arg) {
             }
             break; }
         default: LOG("gst: bad command %u at %llu\n", c.type, (unsigned long long)tail); exit(6);
+        }
+        if (g_ft_on) {
+            LARGE_INTEGER k1; QueryPerformanceCounter(&k1);
+            int k = c.type == C_VIF1 ? 0 : c.type == C_GIF ? 1 : c.type == C_VU1 ? 2 : c.type == C_PRESENT ? 3 : 5;
+            g_ft_kind[k] += (u64)(k1.QuadPart - k0.QuadPart);
         }
         st(&q_tail, tail + size);
         if (__atomic_load_n(&ee_waiting, __ATOMIC_ACQUIRE)) SetEvent(ev_space);

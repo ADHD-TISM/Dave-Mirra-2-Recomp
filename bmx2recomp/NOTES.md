@@ -726,9 +726,40 @@ edges (A/B with GS_PRESENT_BILINEAR=1). GS_SHOT_WINDOW=1 also saves the
 presented window with GS_SHOT. Real time at scale 4 + widescreen: worst frame
 17.2 ms, 0 underruns.
 
-## Next step (recommended, 2026-11-21)
+## Stutter under CPU load, graphics thread speed-ups (2026-11-22)
+User: major stutter at scale 4 + widescreen in Woodward, while other heavy
+programs ran (another game, many Dave Mirra 1 runs, YouTube). Findings:
+- Not the GPU (GPU_TIME ~1 ms a frame) and not the cull fix. The graphics
+  thread's CPU work (VIF1 unpack + VU1 + GS) is ~3 ms a frame idle; when other
+  programs share the cores (SMT) it runs ~35% slower with spikes over 16.7 ms,
+  the EE then waits for frames ("waits for frames" in the gst line) and audio
+  underruns. Bimodal per run on a busy PC; never with nothing else running.
+- No effect: swap interval 0, pinning EE / graphics threads to separate cores,
+  disabling power throttling, a 1 ms timer thread, above-normal process
+  priority (1139 vs 1175-1343 slow frames under a 16-thread load).
+- Speed-ups (identical frames, VU_CHECK 0 mismatches over 9.6M runs):
+  vif.c unpack_bulk decodes whole UNPACK elements from the transfer and
+  stores them directly when there is no mask/mode/fill (was a byte at a time);
+  XGKICK sends its packet in one gif_transfer per contiguous run; VU_PAIR no
+  longer counts pairs or zeroes vi[0] (nothing writes it); recomp_vu.py emits
+  VU_PAIR_PLAIN (no delay-slot / E-bit bookkeeping) for pairs that are no
+  branch, no E bit and do not follow one (1072 of 1388). Turbo benchmark of
+  the ride (min of 3): 3.14 -> 2.46 ms graphics-thread work per frame. Real
+  time under a 16-thread load: slow frames 1128-1281 -> 750-782, audio
+  underruns 750-947 -> 330-354. Not helping: -O3, -march=x86-64-v3, a
+  branch-free fx() (slower).
+- Debug: GS_FRAME_TIMES=1 logs GPU time (timer queries), graphics thread busy
+  time, swap waits, and its work per frame by command kind at exit.
+- Left: VU programs 13 and 4 (vertex transforms) are ~27% of the thread; the
+  rest of the per-pair cost is memory traffic through vu_t pointers (vf, acc,
+  q_wait) and fx clamps on every lane.
+
+## Next step (recommended, 2026-11-22)
 1. Playtest further; add missing code from any message box. Every level now
    loads and rides in scripted crawls (see "Levels and cheats").
+2. More graphics-thread speed if stutter under load still matters: keep VU
+   state in locals inside the recompiled chunks; masked UNPACK (unpack_write
+   ~4%), clut_load and gs_read_pixel (~3% each).
 
 ## Skip intro movies (2026-11-21)
 bmx2.ini skip_intro = 1 (launcher Gameplay tab, off by default). The boot

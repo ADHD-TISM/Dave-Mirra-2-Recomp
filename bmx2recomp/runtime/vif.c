@@ -81,10 +81,10 @@ static void unpack_write(vif_t *v, const u32 in[4], int have_data) {
     }
 }
 
-static void unpack_element(vif_t *v) {
-    u32 out[4] = { 0, 0, 0, 0 };
+/* one element's bytes -> 4 words, by VN/VL/USN */
+static inline void decode_element(vif_t *v, const u8 *b, u32 out[4]) {
     int comps = v->vn + 1;
-    u8 *b = v->ebuf;
+    out[0] = out[1] = out[2] = out[3] = 0;
     if (v->vl == 3) {                       /* V4-5: RGBA 5551 */
         u32 x = b[0] | (b[1] << 8);
         out[0] = (x & 31) << 3; out[1] = ((x >> 5) & 31) << 3; out[2] = ((x >> 10) & 31) << 3; out[3] = (x >> 15) << 7;
@@ -104,7 +104,41 @@ static void unpack_element(vif_t *v) {
             out[3] = v->scan ? 0 : dst[3];
         }
     }
+}
+
+static void unpack_element(vif_t *v) {
+    u32 out[4];
+    decode_element(v, v->ebuf, out);
     unpack_write(v, out, 1);
+}
+
+/* UNPACK data words straight from the transfer (the byte-at-a-time path in
+ * data_word gives the same result): whole elements are decoded from src, and
+ * with no mask, no add mode and no fill cycles stored directly. Any bytes of
+ * an element cut by the end of the transfer go to ebuf for data_word. */
+static u32 unpack_bulk(vif_t *v, const u8 *src, u32 avail) {
+    u32 take = avail < v->remain ? avail : v->remain;
+    u32 bytes = take * 4, eb = v->elem_bytes, ne = bytes / eb;
+    if (!v->msk && !v->mode && !v->scan) {
+        for (u32 e = 0; e < ne; e++) {
+            u32 out[4];
+            decode_element(v, src + e * eb, out);
+            memcpy(v->mem + ((v->addr & v->qmask) << 4), out, 16);
+            v->addr++;
+            if (++v->cycle >= v->wl) { v->cycle = 0; v->addr += v->cl - v->wl; }
+        }
+    } else {
+        for (u32 e = 0; e < ne; e++) {
+            u32 out[4];
+            decode_element(v, src + e * eb, out);
+            unpack_write(v, out, 1);
+        }
+    }
+    v->remain -= take;
+    u32 left = bytes - ne * eb;
+    if (v->remain && left) { memcpy(v->ebuf, src + ne * eb, left); v->nebuf = left; }
+    else v->nebuf = 0;    /* padding bytes of the last word dropped */
+    return take;
 }
 
 static u32 unpack_data_elements(vif_t *v, u32 num) {
@@ -241,12 +275,19 @@ static int drain_pending(vif_t *v) {
 
 static u32 vif_feed(vif_t *v, const u8 *p, u32 nqw) {
     if (v->stalled || !drain_pending(v)) return 0;
-    for (u32 q = 0; q < nqw; q++)
-        for (u32 k = 0; k < 4; k++) {
-            u32 w; memcpy(&w, p + 16 * q + 4 * k, 4);
-            vif_word(v, w, k);
-            if (v->stalled) { keep_rest(v, p + 16 * q, k); return q + 1; }
+    u32 n = nqw * 4;
+    for (u32 i = 0; i < n; ) {
+        if (v->remain && v->cmd >= 0x60 && !v->nebuf && v->wl <= v->cl) {   /* UNPACK data: in bulk */
+            i += unpack_bulk(v, p + 4 * i, n - i);
+            if (!v->remain) cmd_done(v);
+            if (v->stalled) { u32 last = i - 1; keep_rest(v, p + 16 * (last / 4), last & 3); return last / 4 + 1; }
+            continue;
         }
+        u32 w; memcpy(&w, p + 4 * i, 4);
+        vif_word(v, w, i & 3);
+        if (v->stalled) { keep_rest(v, p + 16 * (i / 4), i & 3); return i / 4 + 1; }
+        i++;
+    }
     return nqw;
 }
 

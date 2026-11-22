@@ -113,6 +113,28 @@ def flag_liveness(code, live):
         if unknown or any((q not in live) or lin[q] for q in s): keep.add(p)
     return keep
 
+# ---- plain pairs --------------------------------------------------------------
+# VU_PAIR keeps the branch delay slot and the E-bit stop at run time (bp, bt,
+# ea). A pair needs none of that when it is no branch and has no E bit, and the
+# pair before it in memory is no branch and has no E bit either: then bp is 0
+# and ea is -1 when it runs (a jump resets bp after the delay slot), and it
+# falls through to pc + 8. Such pairs use VU_PAIR_PLAIN. Not valid if an E bit
+# sits in a branch delay slot (ea 0 would arrive by a jump): then none are plain.
+def is_branch(lo, hi):
+    if hi & 0x80000000: return False     # I bit: the lower word is an immediate
+    op = lo >> 25
+    return op in (0x20, 0x21, 0x24, 0x25) or 0x28 <= op <= 0x2f
+
+def plain_pairs(code, live):
+    def w2(p): return int.from_bytes(code[p:p + 4], 'little'), int.from_bytes(code[p + 4:p + 8], 'little')
+    def special(p):
+        lo, hi = w2(p)
+        return is_branch(lo, hi) or bool(hi & 0x40000000)
+    for p in live:
+        lo, hi = w2(p)
+        if hi & 0x40000000 and is_branch(*w2((p - 8) & 0x3ff8)): return set()
+    return {p for p in live if not special(p) and not special((p - 8) & 0x3ff8)}
+
 CHUNK = 64          # pairs per function
 out = sys.argv[1]
 snaps = sys.argv[2:]
@@ -131,6 +153,7 @@ for path in snaps:
     entries.append(0)
     live = reachable(code, entries)
     keepf = flag_liveness(code, live)
+    plain = plain_pairs(code, live)
     nflag = sum(1 for q in live if upper_sets_flags(int.from_bytes(code[q + 4:q + 8], 'little')))
     npairs = len(code) // 8
     fn = f'vu1_rec_{h}'
@@ -158,7 +181,8 @@ for path in snaps:
         for k, p in enumerate(ps):
             lo = int.from_bytes(code[p:p + 4], 'little')
             hi = int.from_bytes(code[p + 4:p + 8], 'little')
-            lines.append(f'p{p:04x}: VU_PAIR(0x{p:04x}u, 0x{lo:08x}u, 0x{hi:08x}u, {1 if p in keepf else 0});')
+            mac = 'VU_PAIR_PLAIN' if p in plain else 'VU_PAIR'
+            lines.append(f'p{p:04x}: {mac}(0x{p:04x}u, 0x{lo:08x}u, 0x{hi:08x}u, {1 if p in keepf else 0});')
             nxt = (p + 8) & 0x3ff8
             following = ps[k + 1] if k + 1 < len(ps) else None
             if following != nxt:
@@ -183,6 +207,7 @@ for path in snaps:
     lines.append('    }')
     lines.append('}')
     lines.append('')
+    print(f'{h}: {len(plain)} plain pairs')
     print(f'{h}: {len(live)} of {npairs} pairs reachable; flag updates kept {sum(1 for q in live if q in keepf and upper_sets_flags(int.from_bytes(code[q + 4:q + 8], "little")))} of {nflag}')
 lines.append('static const struct { u64 hash; void (*fn)(vu_t *, u32); } vu1_rec_table[] = {')
 for h, fn in table:

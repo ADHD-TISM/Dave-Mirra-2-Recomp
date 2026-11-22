@@ -203,7 +203,12 @@ static void xgkick(vu_t *v, u32 addr) {
         u32 nloop = lo & 0x7fff, eop = (lo >> 15) & 1, flg = (lo >> 58) & 3, nreg = (lo >> 60) & 15;
         if (!nreg) nreg = 16;
         u32 n = flg == 0 ? nloop * nreg : flg == 1 ? (nloop * nreg + 1) / 2 : nloop;
-        for (u32 k = 0; k <= n; k++) gif_transfer((const u8 *)qptr(v, addr + k), 1, 1);
+        for (u32 k = 0; k <= n; ) {   /* in runs that do not wrap at the end of VU memory */
+            u32 a = (addr + k) & v->qmask, run = v->qmask + 1 - a;
+            if (run > n + 1 - k) run = n + 1 - k;
+            gif_transfer((const u8 *)qptr(v, a), run, 1);
+            k += run;
+        }
         addr += n + 1;
         if (eop) return;
     }
@@ -382,12 +387,10 @@ static void vu1_code_check(u32 pc) {
  * VU_PAIR is one pair, the same steps as the interpreter loop below. */
 #define VU_PAIR(P, LO, HI, FL) do {                                                  \
         upres up_; u32 tg_ = 0; int br_ = 0;                                         \
-        v->pairs++;                                                                  \
         upper(v, (HI), &up_);                                                        \
         if ((HI) & 0x80000000u) v->i->u = (LO);                                      \
         else br_ = lower(v, (LO), (P), &tg_, 1);                                     \
         upper_commit_fl(v, &up_, (FL));                                              \
-        v->vi[0] = 0;                                                                \
         if (v->q_wait && --v->q_wait == 0) v->q->u = v->q_pend;                      \
         if (v->p_wait && --v->p_wait == 0) v->p = v->p_pend;                         \
         next = (P) + 8;                                                              \
@@ -400,6 +403,18 @@ static void vu1_code_check(u32 pc) {
             if (++guard > 50000000) goto out;                                        \
             goto *L[(next & 0x3ff8) >> 3];                                           \
         }                                                                            \
+    } while (0)
+/* a pair the recompiler proved is no branch, has no E bit and does not follow
+ * one (tools/recomp_vu.py plain_pairs): bp is 0 and ea -1 here, so only the
+ * work and the Q/P countdowns remain; it falls through to the next pair */
+#define VU_PAIR_PLAIN(P, LO, HI, FL) do {                                            \
+        upres up_; u32 tg_ = 0;                                                      \
+        upper(v, (HI), &up_);                                                        \
+        if ((HI) & 0x80000000u) v->i->u = (LO);                                      \
+        else (void)lower(v, (LO), (P), &tg_, 1);                                     \
+        upper_commit_fl(v, &up_, (FL));                                              \
+        if (v->q_wait && --v->q_wait == 0) v->q->u = v->q_pend;                      \
+        if (v->p_wait && --v->p_wait == 0) v->p = v->p_pend;                         \
     } while (0)
 static void vu_interp_state(vu_t *v, u32 pc, int n, int end_after, int branch_pending, u32 branch_to);
 static void vu_interp(vu_t *v, u32 pc, int n) { vu_interp_state(v, pc, n, -1, 0, 0); }

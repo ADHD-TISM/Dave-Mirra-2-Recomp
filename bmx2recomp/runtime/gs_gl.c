@@ -98,7 +98,11 @@ typedef ptrdiff_t GLsizeiptr;
     X(void, glBlitFramebuffer, (GLint, GLint, GLint, GLint, GLint, GLint, GLint, GLint, GLbitfield, GLenum)) \
     X(void, glBlendEquationSeparate, (GLenum, GLenum)) \
     X(void, glBlendFuncSeparate, (GLenum, GLenum, GLenum, GLenum)) \
-    X(void, glActiveTexture, (GLenum))
+    X(void, glActiveTexture, (GLenum)) \
+    X(void, glGenQueries, (GLsizei, GLuint *)) \
+    X(void, glBeginQuery, (GLenum, GLuint)) \
+    X(void, glEndQuery, (GLenum)) \
+    X(void, glGetQueryObjectui64v, (GLuint, GLenum, unsigned long long *))
 #define X(r, n, a) static r (APIENTRY *n) a;
 GLF(X)
 #undef X
@@ -153,6 +157,10 @@ static BOOL CALLBACK mon_cb(HMONITOR m, HDC d, LPRECT r, LPARAM p) {
     if (!GetMonitorInfoA(m, (MONITORINFO *)&mi)) return TRUE;
     int w = mi.rcMonitor.right - mi.rcMonitor.left, h = mi.rcMonitor.bottom - mi.rcMonitor.top;
     int dell = w == 3440 && h == 1440;
+    if (getenv("GS_PRIMARY_MONITOR")) {   /* debug (start-up only): put the window on the primary monitor */
+        if (mi.dwFlags & MONITORINFOF_PRIMARY) { mon_rect = mi.rcWork; mon_found = 1; snprintf(mon_name, sizeof mon_name, "%s", mi.szDevice); }
+        return TRUE;
+    }
     if (dell || (!mon_found && !(mi.dwFlags & MONITORINFOF_PRIMARY))) {
         mon_rect = mi.rcWork; mon_found = 1 + dell;
         snprintf(mon_name, sizeof mon_name, "%s", mi.szDevice);
@@ -1117,6 +1125,57 @@ static void write_shot(const u32 *pix, u32 w, u32 h) {
     fclose(f);
 }
 
+/* GS_FRAME_TIMES=1 (debug): per presented frame, the GPU time (timer queries,
+ * read 4 frames later), the graphics thread's busy time between swaps (minus
+ * its idle sleeps) and the swap wait; counts and worst values at exit, frames
+ * over 16 ms logged with --log-frames. */
+#define GL_TIME_ELAPSED 0x88BF
+#define GL_QUERY_RESULT 0x8866
+static int ftimes;
+static GLuint fq_ids[4]; static int fq_n, fq_open;
+static u64 ft_last_swap_end, ft_idle_at_swap;
+static u64 ft_n, ft_nb, ft_gpu12, ft_gpu16, ft_busy12, ft_busy16, ft_swap8;
+static double ft_gpu_max, ft_busy_max, ft_swap_max, ft_gpu_sum, ft_busy_sum;
+static double qpc_ms(u64 t) { static double f; if (!f) { LARGE_INTEGER q; QueryPerformanceFrequency(&q); f = (double)q.QuadPart; } return (double)t * 1000.0 / f; }
+static void ftimes_before_swap(u64 now) {
+    extern u64 g_gst_idle_ticks; extern int g_log_frames;
+    if (fq_open) { glEndQuery(GL_TIME_ELAPSED); fq_open = 0; }
+    if (!ft_last_swap_end || g_frame < 600) return;
+    double busy = qpc_ms(now - ft_last_swap_end - (g_gst_idle_ticks - ft_idle_at_swap));
+    ft_nb++; ft_busy_sum += busy;
+    if (busy > 12) ft_busy12++; if (busy > 16) ft_busy16++; if (busy > ft_busy_max) ft_busy_max = busy;
+    if (g_log_frames && busy > 16) LOG("frames: graphics thread busy %.1f ms at frame %llu\n", busy, (unsigned long long)g_frame);
+}
+static void ftimes_after_swap(u64 t0, u64 t1) {
+    extern u64 g_gst_idle_ticks; extern int g_log_frames;
+    if (!fq_ids[0]) glGenQueries(4, fq_ids);
+    double sw = qpc_ms(t1 - t0);
+    if (g_frame >= 600) { if (sw > 8) ft_swap8++; if (sw > ft_swap_max) ft_swap_max = sw; }
+    if (fq_n >= 4) {   /* the query issued 4 frames ago */
+        unsigned long long ns = 0; glGetQueryObjectui64v(fq_ids[fq_n & 3], GL_QUERY_RESULT, &ns);
+        double g = (double)ns / 1e6;
+        if (g_frame >= 600) {
+            ft_n++; ft_gpu_sum += g;
+            if (g > 12) ft_gpu12++; if (g > 16) ft_gpu16++; if (g > ft_gpu_max) ft_gpu_max = g;
+            if (g_log_frames && g > 16) LOG("frames: GPU %.1f ms for a frame before %llu\n", g, (unsigned long long)g_frame);
+        }
+    }
+    glBeginQuery(GL_TIME_ELAPSED, fq_ids[fq_n & 3]); fq_open = 1; fq_n++;
+    ft_last_swap_end = t1; ft_idle_at_swap = g_gst_idle_ticks;
+}
+static void ftimes_report(void) {
+    if (!ft_n || !ft_nb) return;
+    {   extern u64 g_ft_kind[8]; static const char *nm[6] = { "vif1+vu1", "gif", "vu1 start", "present", "flush", "other" };
+        LOG("gs: graphics thread ms per frame (whole run):");
+        for (int k = 0; k < 6; k++) LOG(" %s %.2f", nm[k], qpc_ms(g_ft_kind[k]) / (double)fq_n);
+        LOG("\n"); }
+    LOG("gs: frame times (from frame 600): GPU avg %.1f ms, %llu over 12, %llu over 16, worst %.1f; "
+        "graphics thread busy avg %.1f ms, %llu over 12, %llu over 16, worst %.1f; swap waits %llu over 8 ms, worst %.1f\n",
+        ft_gpu_sum / ft_n, (unsigned long long)ft_gpu12, (unsigned long long)ft_gpu16, ft_gpu_max,
+        ft_busy_sum / ft_nb, (unsigned long long)ft_busy12, (unsigned long long)ft_busy16, ft_busy_max,
+        (unsigned long long)ft_swap8, ft_swap_max);
+}
+
 static void present_rect_(u32 fbp, u32 fbw, u32 psm, u32 dbx, u32 dby, u32 w, u32 h);
 void gsgl_present_rect(u32 fbp, u32 fbw, u32 psm, u32 dbx, u32 dby, u32 w, u32 h) {
     if (ft_from == ~0ull) ft_from = getenv("FT_FROM") ? strtoull(getenv("FT_FROM"), 0, 10) : 0;
@@ -1209,8 +1268,10 @@ static void present_rect_(u32 fbp, u32 fbw, u32 psm, u32 dbx, u32 dby, u32 w, u3
     }
     if (frames_since_check++ % 120 == 0) choose_vsync();
     LARGE_INTEGER t0, t1, fq; QueryPerformanceCounter(&t0);
+    if (ftimes) ftimes_before_swap((u64)t0.QuadPart);
     SwapBuffers(dc);
     QueryPerformanceCounter(&t1); QueryPerformanceFrequency(&fq);
+    if (ftimes) ftimes_after_swap((u64)t0.QuadPart, (u64)t1.QuadPart);
     swap_wait_ms = (double)(t1.QuadPart - t0.QuadPart) * 1000.0 / fq.QuadPart;
     {   /* time between presents as the screen gets them: a gap over 20 ms is a frame shown twice */
         static LARGE_INTEGER last; static int have;
@@ -1284,6 +1345,7 @@ int gsgl_init(int show_window, int scale) {
     shot_dir = getenv("GS_SHOT");
     if (getenv("GS_SHOT_EVERY")) shot_every = atoi(getenv("GS_SHOT_EVERY"));
     if (shot_every < 1) shot_every = 1;
+    if (getenv("GS_FRAME_TIMES")) { extern int g_ft_on; ftimes = 1; g_ft_on = 1; atexit(ftimes_report); }
     /* GS_SHOT_FROM / GS_SHOT_TO=<frame>: only shoot inside that frame range */
     if (getenv("GS_SHOT_FROM")) shot_from = strtoull(getenv("GS_SHOT_FROM"), 0, 10);
     if (getenv("GS_SHOT_TO")) shot_to = strtoull(getenv("GS_SHOT_TO"), 0, 10);
