@@ -787,13 +787,39 @@ programs ran (another game, many Dave Mirra 1 runs, YouTube). Findings:
 - Left: VU programs 13 and 4 (vertex transforms) are ~27% of the thread; the
   rest of the per-pair cost is memory traffic through vu_t pointers (vf, acc,
   q_wait) and fx clamps on every lane.
+- Third round (2026-11-22), the VU stage was the bottleneck (GS stage ~45%
+  idle in ring_next):
+  - vu.c upper ops work on 4 lanes in SSE (fx4: the clamp without branches;
+    MAXPS/MINPS are exactly S > T ? S : T). Checked bit-exact against the old
+    per-lane code on 4M random words and registers (denormals, inf, NaN).
+  - recomp_vu.py clamp_analysis: a forward dataflow of which VF lanes hold
+    clamped values; where all 4 lanes of fs / ft are clamped, upper() skips
+    fx4 (CL argument). Run entries, BAL return points and pairs no edge
+    reaches start unclamped. JR/JALR targets are not known statically (vi15
+    is also reloaded with ILW), so their delay slots are VU_PAIR_JRG: a target
+    outside that set runs in the interpreter (none in the ride).
+  - Recompiled chunks keep the Q/P countdowns, status, MAC and P in a local
+    vu_t (VU_REC_ENTER / VU_REC_LEAVE) and the VF registers they name in a
+    local array (VU_REC_LOCAL_VF), copied back at every exit. VUSEL now tests
+    vu_t.rf1.
+  - vif.c unpack_bulk: one loop per format with the VIF fields in locals
+    (-fno-strict-aliasing made every VU memory store reload them); masked and
+    add-mode unpacks take it too. The EE's scan VIF1 only moves addr / cycle
+    (decodes only for add mode 2, to keep ROW).
+  - Turbo ride, process on one logical CPU per core (start /affinity 5555;
+    without it the run-to-run spread is ~30%), median of 4: VU stage work
+    1.82 -> 1.21 ms per frame, wall 6.25 -> 4.52 ms. Frames identical,
+    VU_CHECK 0 mismatches. Once in about 40 ride runs (an early clamp-skip
+    build) the game took another path (fewer VU runs, other key-ons, other
+    poll skip counts) with no error in the log; it did not come back in the
+    next 30 runs of that and later builds. Cause not known.
 
 ## Next step (recommended, 2026-11-22)
 1. Playtest further; add missing code from any message box. Every level now
    loads and rides in scripted crawls (see "Levels and cheats").
-2. More graphics-thread speed if stutter under load still matters: keep VU
-   state in locals inside the recompiled chunks; masked UNPACK (unpack_write
-   ~4%), clut_load and gs_read_pixel (~3% each).
+2. More graphics-thread speed if stutter under load still matters: the VU
+   stage is still the limit (VU1 programs ~57%, VIF ~20% of it); the GS
+   stage's vertex_kick, build_state, clut_load come next once it is faster.
 
 ## Skip intro movies (2026-11-21)
 bmx2.ini skip_intro = 1 (launcher Gameplay tab, off by default). The boot

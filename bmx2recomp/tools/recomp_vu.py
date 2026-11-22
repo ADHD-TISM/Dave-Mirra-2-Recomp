@@ -137,6 +137,117 @@ def plain_pairs(code, live):
         if is_branch(lo, hi) and is_branch(*w2((p - 8) & 0x3ff8)): return set()
     return {p for p in live if not special(p) and not special((p - 8) & 0x3ff8)}
 
+# ---- clamped registers ----------------------------------------------------------
+# upper() clamps both source registers (fx4: denormal -> 0, inf/NaN -> +-max) on
+# every op. A register lane holding an upper op's result is already clamped,
+# and fx is idempotent, so where every lane of fs (ft) is proven clamped at a
+# pair, upper() skips the clamp (the CL argument, bit 0 fs, bit 1 ft).
+# Forward dataflow, meet = AND over predecessors, per register a 4-bit lane
+# mask. Pairs entered from outside the analysis (run entries and BAL/JALR
+# return points: the set U) start with nothing clamped. A JR/JALR through a
+# register that only BAL/JALR write lands on a return point; any other JR gets
+# a run-time guard (VU_PAIR_JRG on its delay slot) that sends a target outside
+# U to the interpreter, so every edge into a generated pair is known.
+def lower_vi_writes(lo, hi):
+    """VI registers a lower op writes, and whether it is a BAL/JALR link"""
+    if hi & 0x80000000: return set(), False
+    op, it, is_, id_ = lo >> 25, (lo >> 16) & 31, (lo >> 11) & 31, (lo >> 6) & 31
+    if op in (0x21, 0x25): return {it}, True
+    if op in (0x04, 0x08, 0x09, 0x14, 0x16, 0x17, 0x18, 0x1a, 0x1b, 0x1c): return {it}, False
+    if op != 0x40: return set(), False
+    fn = lo & 63
+    if fn in (0x30, 0x31, 0x34, 0x35): return {id_}, False
+    if fn == 0x32: return {it}, False
+    if fn < 0x3c: return set(), False
+    x = ((lo >> 4) & 0x7c) | (lo & 3)
+    if x in (0x34, 0x36): return {is_}, False          # LQI / LQD step is
+    if x in (0x35, 0x37, 0x3c, 0x3e, 0x68, 0x69): return {it}, False   # SQI/SQD step it; MTIR ILWR XTOP XITOP
+    return set(), False
+
+def vf_effect(lo, hi, st):
+    """register lane masks after the pair (lower first, then upper: the upper wins)"""
+    st = dict(st)
+    def setm(r, dest, clamped):
+        if r == 0: return
+        lanes = 0
+        for c in range(4):
+            if (dest >> (3 - c)) & 1: lanes |= 1 << c
+        st[r] = (st.get(r, 0) | lanes) if clamped else (st.get(r, 0) & ~lanes)
+    if not hi & 0x80000000:
+        op, dest, it, is_ = lo >> 25, (lo >> 21) & 15, (lo >> 16) & 31, (lo >> 11) & 31
+        if op == 0x00: setm(it, dest, False)                                  # LQ
+        elif op == 0x40 and (lo & 63) >= 0x3c:
+            x = ((lo >> 4) & 0x7c) | (lo & 3)
+            if x == 0x30 and it:                                              # MOVE: lanes copy their state
+                src = 15 if is_ == 0 else st.get(is_, 0)
+                for c in range(4):
+                    if (dest >> (3 - c)) & 1:
+                        st[it] = (st.get(it, 0) & ~(1 << c)) | (src & (1 << c))
+            elif x in (0x31, 0x34, 0x36, 0x3d, 0x40, 0x41, 0x64): setm(it, dest, False)   # MR32 LQI LQD MFIR RNEXT RGET MFP
+    dest, ft, fd, fn = (hi >> 21) & 15, (hi >> 16) & 31, (hi >> 6) & 31, hi & 63
+    if fn < 0x3c:
+        if fn <= 0x2f: setm(fd, 14 if fn == 0x2e else dest, True)
+    else:
+        op = ((hi >> 4) & 0x7c) | (hi & 3)
+        if 0x10 <= op <= 0x13 or op == 0x1d: setm(ft, dest, True)            # ITOF (normal or 0), ABS
+        elif 0x14 <= op <= 0x17: setm(ft, dest, False)                        # FTOI: integer bits
+    return st
+
+def clamp_analysis(code, live, entries):
+    def w2(p): return int.from_bytes(code[p:p + 4], 'little'), int.from_bytes(code[p + 4:p + 8], 'little')
+    link, other = set(), set()
+    for p in live:
+        regs, is_link = lower_vi_writes(*w2(p))
+        (link if is_link else other).update(regs)
+    U = {e & 0x3ff8 for e in entries}
+    guard = set()                       # delay slots of JRs whose target must be checked
+    for p in live:
+        lo, hi = w2(p)
+        if hi & 0x80000000: continue
+        op = lo >> 25
+        if op in (0x21, 0x25): U.add((p + 16) & 0x3ff8)
+        if op in (0x24, 0x25):
+            r = (lo >> 11) & 31
+            if not (r in link and r not in other): guard.add((p + 8) & 0x3ff8)
+    preds = {p: [] for p in live}
+    for p in live:
+        lo, hi = w2(p)
+        prev = (p - 8) & 0x3ff8
+        succ = [(p + 8) & 0x3ff8]
+        if prev in live:
+            plo, phi = w2(prev)
+            if phi & 0x40000000: succ = []                       # p runs after an E bit: the run ends
+            elif not phi & 0x80000000:
+                pop = plo >> 25
+                if pop in (0x20, 0x21) or 0x28 <= pop <= 0x2f:
+                    succ.append((prev + 8 + imm11(plo) * 8) & 0x3ff8)
+                    if pop in (0x20, 0x21): succ.remove((p + 8) & 0x3ff8)
+                if pop in (0x24, 0x25): succ = []                # JR/JALR: lands in U only
+        for q in succ:
+            if q in live: preds[q].append(p)
+    # a pair no known edge reaches (after a JR delay slot: a target loaded with
+    # ILW) starts with nothing clamped anyway, so JRs may land there too
+    U |= {p for p in live if not preds[p]}
+    ALL = {r: 15 for r in range(1, 32)}
+    inn = {p: ({} if p in U or not preds[p] else dict(ALL)) for p in live}
+    changed = True
+    while changed:
+        changed = False
+        for p in sorted(live):
+            if p in U or not preds[p]: continue
+            m = dict(ALL)
+            for q in preds[p]:
+                o = vf_effect(*w2(q), inn[q])
+                for r in range(1, 32): m[r] &= o.get(r, 0)
+            if m != inn[p]: inn[p] = m; changed = True
+    cl = {}
+    for p in live:
+        lo, hi = w2(p)
+        fs, ft = (hi >> 11) & 31, (hi >> 16) & 31
+        full = lambda r: r == 0 or inn[p].get(r, 0) == 15
+        cl[p] = (1 if full(fs) else 0) | (2 if full(ft) else 0)
+    return cl, U, guard
+
 CHUNK = 64          # pairs per function
 out = sys.argv[1]
 snaps = sys.argv[2:]
@@ -156,6 +267,7 @@ for path in snaps:
     live = reachable(code, entries)
     keepf = flag_liveness(code, live)
     plain = plain_pairs(code, live)
+    cl, U, guard = clamp_analysis(code, live, entries)
     nflag = sum(1 for q in live if upper_sets_flags(int.from_bytes(code[q + 4:q + 8], 'little')))
     npairs = len(code) // 8
     fn = f'vu1_rec_{h}'
@@ -168,12 +280,28 @@ for path in snaps:
     order = sorted(live)
     chunks = [order[i:i + CHUNK] for i in range(0, len(order), CHUNK)]
     owner = {}
+    if guard:
+        lines.append(f'static const u8 {fn}_jr_ok[{npairs}] = {{   /* JR targets the clamp analysis allows (run entries, return points) */')
+        for i in range(0, npairs, 32):
+            lines.append('    ' + ','.join('1' if (i + k) * 8 in U else '0' for k in range(32)) + ',')
+        lines.append('};')
     for c, ps in enumerate(chunks):
         for p in ps: owner[p] = c
     for c, ps in enumerate(chunks):
         mine = set(ps)
         lines.append(f'static int {fn}_{c}(vu_t *v_, vu_rs *s) {{   /* {ps[0]:04x}-{ps[-1]:04x} */')
-        lines.append('    vu_t *const v = &VU[1]; (void)v_;   /* constant: register files fold to the VU1 globals (vu.c VFP) */')
+        lines.append('    VU_REC_ENTER; (void)v_;   /* local pipeline state; register files fold to the VU1 globals (vu.c) */')
+        # VF registers any field of the chunk's pairs may name (a superset: copying an
+        # unused one in and out costs a little and changes nothing)
+        regs = set()
+        for p in ps:
+            for wd in (int.from_bytes(code[p:p + 4], 'little'), int.from_bytes(code[p + 4:p + 8], 'little')):
+                regs |= {(wd >> 6) & 31, (wd >> 11) & 31, (wd >> 16) & 31}
+        # vf0 too: MTIR, RINIT, DIV and friends read its raw bits
+        regs = sorted(regs)
+        lines.append('    VU_REC_LOCAL_VF(lvf_);')
+        lines.append('    ' + ' '.join(f'lvf_[{r}] = vu1_vf[{r}];' for r in regs))
+        save = ' '.join(f'vu1_vf[{r}] = lvf_[{r}];' for r in regs) + ' '
         lines.append('    static void *const L[%d] = {' % npairs)
         for i in range(0, npairs, 8):
             lines.append('        ' + ', '.join(f'&&p{(i + k) * 8:04x}' if (i + k) * 8 in mine else ('&&ex' if (i + k) * 8 in live else '&&fb')
@@ -184,18 +312,19 @@ for path in snaps:
         for k, p in enumerate(ps):
             lo = int.from_bytes(code[p:p + 4], 'little')
             hi = int.from_bytes(code[p + 4:p + 8], 'little')
-            mac = 'VU_PAIR_PLAIN' if p in plain else 'VU_PAIR'
-            lines.append(f'p{p:04x}: {mac}(0x{p:04x}u, 0x{lo:08x}u, 0x{hi:08x}u, {1 if p in keepf else 0});')
+            mac = 'VU_PAIR_PLAIN' if p in plain else 'VU_PAIR_JRG' if p in guard else 'VU_PAIR'
+            extra = f', {fn}_jr_ok' if p in guard else ''
+            lines.append(f'p{p:04x}: {mac}(0x{p:04x}u, 0x{lo:08x}u, 0x{hi:08x}u, {1 if p in keepf else 0}, {cl[p]}{extra});')
             nxt = (p + 8) & 0x3ff8
             following = ps[k + 1] if k + 1 < len(ps) else None
             if following != nxt:
                 lines.append(f'    next = 0x{nxt:04x}u; goto *L[0x{nxt >> 3:x}];')
         lines.append('ex:')
-        lines.append('    s->ea = ea; s->bp = bp; s->bt = bt; s->next = next; s->guard = guard; return 1;')
+        lines.append('    ' + save + 'VU_REC_LEAVE; s->ea = ea; s->bp = bp; s->bt = bt; s->next = next; s->guard = guard; return 1;')
         lines.append('fb:')
-        lines.append('    vu_rec_fallback(v, next, ea, bp, bt);')
+        lines.append('    ' + save + 'VU_REC_LEAVE; vu_rec_fallback(&VU[1], next, ea, bp, bt); return 0;')
         lines.append('out:')
-        lines.append('    return 0;')
+        lines.append('    ' + save + 'VU_REC_LEAVE; return 0;')
         lines.append('}')
     lines.append(f'static int (*const {fn}_chunk[{npairs}])(vu_t *, vu_rs *) = {{')
     for i in range(0, npairs, 8):
@@ -211,6 +340,7 @@ for path in snaps:
     lines.append('}')
     lines.append('')
     print(f'{h}: {len(plain)} plain pairs')
+    print(f'{h}: clamp skipped for fs at {sum(1 for q in live if cl[q] & 1)}, ft at {sum(1 for q in live if cl[q] & 2)} of {len(live)} pairs; {len(guard)} JR guards')
     print(f'{h}: {len(live)} of {npairs} pairs reachable; flag updates kept {sum(1 for q in live if q in keepf and upper_sets_flags(int.from_bytes(code[q + 4:q + 8], "little")))} of {nflag}')
 lines.append('static const struct { u64 hash; void (*fn)(vu_t *, u32); } vu1_rec_table[] = {')
 for h, fn in table:

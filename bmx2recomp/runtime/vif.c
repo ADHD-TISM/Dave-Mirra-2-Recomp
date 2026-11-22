@@ -113,26 +113,84 @@ static void unpack_element(vif_t *v) {
 }
 
 /* UNPACK data words straight from the transfer (the byte-at-a-time path in
- * data_word gives the same result): whole elements are decoded from src, and
- * with no mask, no add mode and no fill cycles stored directly. Any bytes of
- * an element cut by the end of the transfer go to ebuf for data_word. */
+ * data_word gives the same result): whole elements are decoded from src.
+ * One loop per format (vn, vl constant), with the VIF fields in locals: with
+ * -fno-strict-aliasing every store to VU memory made the compiler reload them
+ * from v. The scan unit (no writes) only advances addr / cycle, and decodes
+ * only for add mode 2, whose ROW it must keep. Any bytes of an element cut by
+ * the end of the transfer go to ebuf for data_word. */
+#define AIV static inline __attribute__((always_inline))
+AIV void bulk_loop(vif_t *v, const u8 *src, u32 ne, const int vn, const int vl) {
+    u8 *const mem = v->mem;
+    const u32 qm = v->qmask, wl = v->wl, cl = v->cl, mode = v->mode, usn = v->usn, msk = v->msk, mask = v->mask;
+    const int scan = v->scan, plain = !msk && !mode && !scan;
+    const u32 eb = vl == 3 ? 2 : (vn + 1) * (vl == 0 ? 4 : vl == 1 ? 2 : 1);
+    u32 addr = v->addr, cycle = v->cycle, row[4], col[4];
+    memcpy(row, v->row, 16); memcpy(col, v->col, 16);
+    if (scan && mode != 2) {          /* nothing to write or keep: only the position moves */
+        for (u32 e = 0; e < ne; e++) { addr++; if (++cycle >= wl) { cycle = 0; addr += cl - wl; } }
+        v->addr = addr; v->cycle = cycle;
+        return;
+    }
+    for (u32 e = 0; e < ne; e++, src += eb) {
+        u32 *dst = (u32 *)(mem + ((addr & qm) << 4)), out[4];
+        if (vl == 3) {                                  /* V4-5: RGBA 5551 */
+            u32 x = src[0] | (src[1] << 8);
+            out[0] = (x & 31) << 3; out[1] = ((x >> 5) & 31) << 3; out[2] = ((x >> 10) & 31) << 3; out[3] = (x >> 15) << 7;
+        } else {
+            for (int i = 0; i <= vn; i++) {
+                u32 x;
+                if (vl == 0) memcpy(&x, src + 4 * i, 4);
+                else if (vl == 1) { u16 h; memcpy(&h, src + 2 * i, 2); x = usn ? h : (u32)(s32)(int16_t)h; }
+                else { u8 c = src[i]; x = usn ? c : (u32)(s32)(int8_t)c; }
+                out[i] = x;
+            }
+            if (vn == 0) out[1] = out[2] = out[3] = out[0];
+            else if (vn == 1) { out[2] = out[0]; out[3] = out[1]; }
+            else if (vn == 2) out[3] = scan ? 0 : dst[3];   /* w: hardware takes what follows in the stream; keep memory */
+        }
+        if (plain) memcpy(dst, out, 16);
+        else {
+            u32 c = cycle < 3 ? cycle : 3;
+            for (int i = 0; i < 4; i++) {
+                u32 m = msk ? (mask >> ((c * 4 + i) * 2)) & 3 : 0, x;
+                switch (m) {
+                case 0:
+                    x = out[i];
+                    if (mode == 1) x += row[i];
+                    else if (mode == 2) { row[i] += x; x = row[i]; }
+                    break;
+                case 1: x = row[i]; break;
+                case 2: x = col[c]; break;
+                default: continue;
+                }
+                if (!scan) dst[i] = x;
+            }
+        }
+        addr++;
+        if (++cycle >= wl) { cycle = 0; addr += cl - wl; }
+    }
+    v->addr = addr; v->cycle = cycle;
+    if (mode == 2) memcpy(v->row, row, 16);
+}
+
 static u32 unpack_bulk(vif_t *v, const u8 *src, u32 avail) {
     u32 take = avail < v->remain ? avail : v->remain;
     u32 bytes = take * 4, eb = v->elem_bytes, ne = bytes / eb;
-    if (!v->msk && !v->mode && !v->scan) {
-        for (u32 e = 0; e < ne; e++) {
-            u32 out[4];
-            decode_element(v, src + e * eb, out);
-            memcpy(v->mem + ((v->addr & v->qmask) << 4), out, 16);
-            v->addr++;
-            if (++v->cycle >= v->wl) { v->cycle = 0; v->addr += v->cl - v->wl; }
-        }
-    } else {
-        for (u32 e = 0; e < ne; e++) {
-            u32 out[4];
-            decode_element(v, src + e * eb, out);
-            unpack_write(v, out, 1);
-        }
+    switch (v->vl == 3 ? 15 : v->vn * 4 + v->vl) {
+    case 0: bulk_loop(v, src, ne, 0, 0); break;
+    case 1: bulk_loop(v, src, ne, 0, 1); break;
+    case 2: bulk_loop(v, src, ne, 0, 2); break;
+    case 4: bulk_loop(v, src, ne, 1, 0); break;
+    case 5: bulk_loop(v, src, ne, 1, 1); break;
+    case 6: bulk_loop(v, src, ne, 1, 2); break;
+    case 8: bulk_loop(v, src, ne, 2, 0); break;
+    case 9: bulk_loop(v, src, ne, 2, 1); break;
+    case 10: bulk_loop(v, src, ne, 2, 2); break;
+    case 12: bulk_loop(v, src, ne, 3, 0); break;
+    case 13: bulk_loop(v, src, ne, 3, 1); break;
+    case 14: bulk_loop(v, src, ne, 3, 2); break;
+    default: bulk_loop(v, src, ne, 3, 3); break;
     }
     v->remain -= take;
     u32 left = bytes - ne * eb;

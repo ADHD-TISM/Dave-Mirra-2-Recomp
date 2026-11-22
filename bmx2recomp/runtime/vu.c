@@ -11,6 +11,7 @@
  * packet at once on path 1. VU0 uses the EE's COP2 registers. */
 #include "rt.h"
 #include <math.h>
+#include <emmintrin.h>
 #include <stdlib.h>
 
 void gif_transfer(const u8 *qw, u32 nqw, int path);
@@ -24,6 +25,7 @@ typedef struct {
     u32 q_pend, p_pend; int q_wait, p_wait;
     u32 tpc;
     u64 runs, pairs;
+    int rf1;                       /* 1: VU1, the register files are the fixed arrays below */
 } vu_t;
 
 static vf128 vu1_vf[32], vu1_acc;
@@ -33,17 +35,18 @@ static vu_t VU[2];
 static int vu_ready;
 static int vu_no_kick;          /* VU_CHECK: the reference run must not send GIF data */
 /* Register files: VU1 always uses the fixed arrays below. The recompiled VU1
- * chunks run with v = &VU[1] known at compile time, so these fold to the
- * globals and the compiler knows no store to them changes any other (with
- * v->vf etc. through pointers every store forced the pointers to be reloaded). */
-#define VUSEL(v, one, f) ((v) == &VU[1] ? (one) : (v)->f)
+ * chunks run with a local vu_t whose rf1 is the constant 1 (VU_REC_ENTER), so
+ * these fold to the globals and the compiler knows no store to them changes
+ * any other (with v->vf etc. through pointers every store forced the pointers
+ * to be reloaded). */
+#define VUSEL(v, one, f) ((v)->rf1 ? (one) : (v)->f)
 #define VFP(v)   VUSEL(v, vu1_vf, vf)
 #define VIP(v)   VUSEL(v, vu1_vi, vi)
 #define ACCP(v)  VUSEL(v, &vu1_acc, acc)
 #define QP(v)    VUSEL(v, &vu1_q, q)
 #define IP(v)    VUSEL(v, &vu1_i, i)
 #define MEMP(v)  VUSEL(v, vu1_mem, mem)
-#define QMASK(v) ((v) == &VU[1] ? 0x3ffu : (v)->qmask)
+#define QMASK(v) ((v)->rf1 ? 0x3ffu : (v)->qmask)
 
 static void vu_setup(void) {
     if (vu_ready) return;
@@ -51,28 +54,63 @@ static void vu_setup(void) {
     VU[0].vf = ee.vf; VU[0].vi = ee.vi; VU[0].acc = &ee.vacc; VU[0].q = &ee.vq; VU[0].i = &ee.vi_reg;
     VU[0].mem = vu0_mem; VU[0].qmask = 0xff; VU[0].code = vu0_code; VU[0].cmask = 0xfff;
     VU[1].vf = vu1_vf; VU[1].vi = vu1_vi; VU[1].acc = &vu1_acc; VU[1].q = &vu1_q; VU[1].i = &vu1_i;
-    VU[1].mem = vu1_mem; VU[1].qmask = 0x3ff; VU[1].code = vu1_code; VU[1].cmask = 0x3fff;
+    VU[1].mem = vu1_mem; VU[1].qmask = 0x3ff; VU[1].code = vu1_code; VU[1].cmask = 0x3fff; VU[1].rf1 = 1;
     vu1_vf[0].f[3] = 1.0f;
 }
 
 #define AI static inline __attribute__((always_inline))
 static inline float fx(float x) { return fpu_fix(x); }
 static inline int has(int dest, int c) { return (dest >> (3 - c)) & 1; }
-static inline u32 *qptr(vu_t *v, u32 a) { return (u32 *)(MEMP(v) + ((a & QMASK(v)) << 4)); }
+AI u32 *qptr(vu_t *v, u32 a) { return (u32 *)(MEMP(v) + ((a & QMASK(v)) << 4)); }
 
 AI void vfget(vu_t *v, int n, float *o) {
     if (n == 0) { o[0] = o[1] = o[2] = 0; o[3] = 1; return; }
     for (int c = 0; c < 4; c++) o[c] = fx(VFP(v)[n].f[c]);
 }
 
-AI void set_flags(vu_t *v, int dest, const float *r) {
-    u32 mac = 0;
-    for (int c = 0; c < 4; c++) {
-        if (!has(dest, c)) continue;
-        int bit = 3 - c;
-        if (r[c] == 0.0f) mac |= 1u << bit;
-        if (signbit(r[c])) mac |= 0x10u << bit;
+/* The upper (FMAC) ops work on all 4 lanes at once in SSE registers. The
+ * clamp fx4 is fx on every lane without branches. Each result is the same
+ * bit pattern the per-lane code gave: the same IEEE single ops in the same
+ * order, MAXPS/MINPS pick exactly S > T ? S : T and S < T ? S : T, and no
+ * operand can be NaN after fx. */
+typedef __m128 f4;
+#define I4(x) _mm_set1_epi32((int)(x))
+AI f4 fx4(f4 x) {
+    __m128i b = _mm_castps_si128(x), e = _mm_and_si128(b, I4(0x7f800000u)), sg = _mm_and_si128(b, I4(0x80000000u));
+    __m128i inf = _mm_cmpeq_epi32(e, I4(0x7f800000u)), m = _mm_or_si128(inf, _mm_cmpeq_epi32(e, _mm_setzero_si128()));
+    __m128i r = _mm_or_si128(_mm_andnot_si128(m, b), _mm_and_si128(m, sg));
+    return _mm_castsi128_ps(_mm_or_si128(r, _mm_and_si128(inf, I4(0x7f7fffffu))));
+}
+/* cl: the recompiler proved every lane of the register holds a clamped value */
+AI f4 vfget4(vu_t *v, int n, int cl) {
+    if (n == 0) return _mm_set_ps(1.0f, 0.0f, 0.0f, 0.0f);
+    f4 x = _mm_loadu_ps(VFP(v)[n].f);
+    return cl ? x : fx4(x);
+}
+AI f4 bcast(f4 t, int bc) {
+    switch (bc) {
+    case 0: return _mm_shuffle_ps(t, t, 0x00);
+    case 1: return _mm_shuffle_ps(t, t, 0x55);
+    case 2: return _mm_shuffle_ps(t, t, 0xaa);
+    default: return _mm_shuffle_ps(t, t, 0xff);
     }
+}
+/* lane c is written when has(dest, c): dest bit 3 is x (lane 0) */
+AI f4 dmask(int dest) {
+    return _mm_castsi128_ps(_mm_set_epi32(-(dest & 1), -((dest >> 1) & 1), -((dest >> 2) & 1), -((dest >> 3) & 1)));
+}
+AI void st4(float *dst, f4 r, int dest) {
+    if (dest == 15) { _mm_storeu_ps(dst, r); return; }
+    if (dest == 0) return;
+    f4 m = dmask(dest);
+    _mm_storeu_ps(dst, _mm_or_ps(_mm_and_ps(m, r), _mm_andnot_ps(m, _mm_loadu_ps(dst))));
+}
+
+AI void set_flags(vu_t *v, int dest, f4 r) {
+    /* movemask bit c is lane c; MAC bit 3 - c is lane c */
+    static const u8 rev[16] = { 0, 8, 4, 12, 2, 10, 6, 14, 1, 9, 5, 13, 3, 11, 7, 15 };
+    int z = _mm_movemask_ps(_mm_cmpeq_ps(r, _mm_setzero_ps())), sgn = _mm_movemask_ps(r);
+    u32 mac = (rev[z] & dest) | ((u32)(rev[sgn] & dest) << 4);
     v->mac = mac;
     u32 st = v->status & 0xfc0;
     if (mac & 0x0f) st |= 1 | 0x40;
@@ -82,112 +120,118 @@ AI void set_flags(vu_t *v, int dest, const float *r) {
 }
 
 /* ---- upper ------------------------------------------------------------------- */
-typedef struct { int kind; int reg; int dest; int flags; u32 clip; float r[4]; u32 u[4]; } upres;   /* kind 0 none, 1 vf float, 2 acc, 3 vf raw, 4 clip */
+typedef struct { int kind; int reg; int dest; int flags; u32 clip; f4 r; } upres;   /* kind 0 none, 1 vf float, 2 acc, 3 vf raw bits, 4 clip */
 
-AI void upper(vu_t *v, u32 w, upres *o) {
+/* cl bit 0: fs is clamped already, bit 1: ft (tools/recomp_vu.py clamp_analysis; 0 = clamp both) */
+AI void upper(vu_t *v, u32 w, upres *o, int cl) {
     int dest = (w >> 21) & 15, ft = (w >> 16) & 31, fs = (w >> 11) & 31, fd = (w >> 6) & 31, fn = w & 63, bc = w & 3;
-    float S[4], T[4], A[4], *R = o->r;
-    vfget(v, fs, S); vfget(v, ft, T);
-    for (int c = 0; c < 4; c++) A[c] = ACCP(v)->f[c];
-    float q = QP(v)->f, I = IP(v)->f;
-    int c, flags = 1;
+    f4 S = vfget4(v, fs, cl & 1), T = vfget4(v, ft, cl & 2), A = _mm_loadu_ps(ACCP(v)->f), R;
+    f4 q = _mm_set1_ps(QP(v)->f), I = _mm_set1_ps(IP(v)->f);
+    int flags = 1;
     o->kind = 0; o->dest = dest; o->reg = fd; o->flags = 0;
+#define MADD(x, y) _mm_add_ps(A, fx4(_mm_mul_ps(x, y)))
+#define MSUB(x, y) _mm_sub_ps(A, fx4(_mm_mul_ps(x, y)))
+#define YZX(x) _mm_shuffle_ps(x, x, _MM_SHUFFLE(3, 0, 2, 1))
+#define ZXY(x) _mm_shuffle_ps(x, x, _MM_SHUFFLE(3, 1, 0, 2))
     if (fn < 0x3c) {
-        float tb = T[bc];
+        f4 tb = bcast(T, bc);
         o->kind = 1;
         switch (fn) {
-        case 0x00: case 0x01: case 0x02: case 0x03: for (c = 0; c < 4; c++) R[c] = S[c] + tb; break;
-        case 0x04: case 0x05: case 0x06: case 0x07: for (c = 0; c < 4; c++) R[c] = S[c] - tb; break;
-        case 0x08: case 0x09: case 0x0a: case 0x0b: for (c = 0; c < 4; c++) R[c] = A[c] + fx(S[c] * tb); break;
-        case 0x0c: case 0x0d: case 0x0e: case 0x0f: for (c = 0; c < 4; c++) R[c] = A[c] - fx(S[c] * tb); break;
-        case 0x10: case 0x11: case 0x12: case 0x13: for (c = 0; c < 4; c++) R[c] = S[c] > tb ? S[c] : tb; flags = 0; break;
-        case 0x14: case 0x15: case 0x16: case 0x17: for (c = 0; c < 4; c++) R[c] = S[c] < tb ? S[c] : tb; flags = 0; break;
-        case 0x18: case 0x19: case 0x1a: case 0x1b: for (c = 0; c < 4; c++) R[c] = S[c] * tb; break;
-        case 0x1c: for (c = 0; c < 4; c++) R[c] = S[c] * q; break;
-        case 0x1d: for (c = 0; c < 4; c++) R[c] = S[c] > I ? S[c] : I; flags = 0; break;
-        case 0x1e: for (c = 0; c < 4; c++) R[c] = S[c] * I; break;
-        case 0x1f: for (c = 0; c < 4; c++) R[c] = S[c] < I ? S[c] : I; flags = 0; break;
-        case 0x20: for (c = 0; c < 4; c++) R[c] = S[c] + q; break;
-        case 0x21: for (c = 0; c < 4; c++) R[c] = A[c] + fx(S[c] * q); break;
-        case 0x22: for (c = 0; c < 4; c++) R[c] = S[c] + I; break;
-        case 0x23: for (c = 0; c < 4; c++) R[c] = A[c] + fx(S[c] * I); break;
-        case 0x24: for (c = 0; c < 4; c++) R[c] = S[c] - q; break;
-        case 0x25: for (c = 0; c < 4; c++) R[c] = A[c] - fx(S[c] * q); break;
-        case 0x26: for (c = 0; c < 4; c++) R[c] = S[c] - I; break;
-        case 0x27: for (c = 0; c < 4; c++) R[c] = A[c] - fx(S[c] * I); break;
-        case 0x28: for (c = 0; c < 4; c++) R[c] = S[c] + T[c]; break;
-        case 0x29: for (c = 0; c < 4; c++) R[c] = A[c] + fx(S[c] * T[c]); break;
-        case 0x2a: for (c = 0; c < 4; c++) R[c] = S[c] * T[c]; break;
-        case 0x2b: for (c = 0; c < 4; c++) R[c] = S[c] > T[c] ? S[c] : T[c]; flags = 0; break;
-        case 0x2c: for (c = 0; c < 4; c++) R[c] = S[c] - T[c]; break;
-        case 0x2d: for (c = 0; c < 4; c++) R[c] = A[c] - fx(S[c] * T[c]); break;
-        case 0x2e: R[0] = A[0] - fx(S[1] * T[2]); R[1] = A[1] - fx(S[2] * T[0]); R[2] = A[2] - fx(S[0] * T[1]); R[3] = 0; o->dest = dest = 14; break;
-        case 0x2f: for (c = 0; c < 4; c++) R[c] = S[c] < T[c] ? S[c] : T[c]; flags = 0; break;
+        case 0x00: case 0x01: case 0x02: case 0x03: R = _mm_add_ps(S, tb); break;
+        case 0x04: case 0x05: case 0x06: case 0x07: R = _mm_sub_ps(S, tb); break;
+        case 0x08: case 0x09: case 0x0a: case 0x0b: R = MADD(S, tb); break;
+        case 0x0c: case 0x0d: case 0x0e: case 0x0f: R = MSUB(S, tb); break;
+        case 0x10: case 0x11: case 0x12: case 0x13: R = _mm_max_ps(S, tb); flags = 0; break;
+        case 0x14: case 0x15: case 0x16: case 0x17: R = _mm_min_ps(S, tb); flags = 0; break;
+        case 0x18: case 0x19: case 0x1a: case 0x1b: R = _mm_mul_ps(S, tb); break;
+        case 0x1c: R = _mm_mul_ps(S, q); break;
+        case 0x1d: R = _mm_max_ps(S, I); flags = 0; break;
+        case 0x1e: R = _mm_mul_ps(S, I); break;
+        case 0x1f: R = _mm_min_ps(S, I); flags = 0; break;
+        case 0x20: R = _mm_add_ps(S, q); break;
+        case 0x21: R = MADD(S, q); break;
+        case 0x22: R = _mm_add_ps(S, I); break;
+        case 0x23: R = MADD(S, I); break;
+        case 0x24: R = _mm_sub_ps(S, q); break;
+        case 0x25: R = MSUB(S, q); break;
+        case 0x26: R = _mm_sub_ps(S, I); break;
+        case 0x27: R = MSUB(S, I); break;
+        case 0x28: R = _mm_add_ps(S, T); break;
+        case 0x29: R = MADD(S, T); break;
+        case 0x2a: R = _mm_mul_ps(S, T); break;
+        case 0x2b: R = _mm_max_ps(S, T); flags = 0; break;
+        case 0x2c: R = _mm_sub_ps(S, T); break;
+        case 0x2d: R = MSUB(S, T); break;
+        case 0x2e: R = MSUB(YZX(S), ZXY(T)); o->dest = dest = 14; break;   /* OPMSUB: w is not written */
+        case 0x2f: R = _mm_min_ps(S, T); flags = 0; break;
         default: o->kind = 0; { static int once; if (!once++) LOG("vu: unknown upper %08x\n", w); } return;
         }
-        for (c = 0; c < 4; c++) R[c] = fx(R[c]);
+        o->r = fx4(R);
         o->flags = flags;
         return;
     }
     int op = ((w >> 4) & 0x7c) | bc;
-    float tb = T[bc];
+    f4 tb = bcast(T, bc);
     o->kind = 2;
     switch (op) {
-    case 0x00: case 0x01: case 0x02: case 0x03: for (c = 0; c < 4; c++) R[c] = S[c] + tb; break;
-    case 0x04: case 0x05: case 0x06: case 0x07: for (c = 0; c < 4; c++) R[c] = S[c] - tb; break;
-    case 0x08: case 0x09: case 0x0a: case 0x0b: for (c = 0; c < 4; c++) R[c] = A[c] + fx(S[c] * tb); break;
-    case 0x0c: case 0x0d: case 0x0e: case 0x0f: for (c = 0; c < 4; c++) R[c] = A[c] - fx(S[c] * tb); break;
-    case 0x10: case 0x11: case 0x12: case 0x13: {   /* ITOF0/4/12/15 */
+    case 0x00: case 0x01: case 0x02: case 0x03: R = _mm_add_ps(S, tb); break;
+    case 0x04: case 0x05: case 0x06: case 0x07: R = _mm_sub_ps(S, tb); break;
+    case 0x08: case 0x09: case 0x0a: case 0x0b: R = MADD(S, tb); break;
+    case 0x0c: case 0x0d: case 0x0e: case 0x0f: R = MSUB(S, tb); break;
+    case 0x10: case 0x11: case 0x12: case 0x13: {   /* ITOF0/4/12/15: from the raw register bits */
         static const float sc[4] = { 1.0f, 1.0f / 16, 1.0f / 4096, 1.0f / 32768 };
         o->kind = 3; o->reg = ft;
-        for (c = 0; c < 4; c++) { fr f; f.f = (float)VFP(v)[fs].s[c] * sc[op & 3]; o->u[c] = f.u; }
-        if (fs == 0) { o->u[0] = o->u[1] = o->u[2] = 0; o->u[3] = 0; }
+        if (fs == 0) { o->r = _mm_setzero_ps(); return; }
+        o->r = _mm_castsi128_ps(_mm_castps_si128(_mm_mul_ps(_mm_cvtepi32_ps(_mm_loadu_si128((const __m128i *)VFP(v)[fs].u)), _mm_set1_ps(sc[op & 3]))));
         return; }
-    case 0x14: case 0x15: case 0x16: case 0x17: {   /* FTOI0/4/12/15 */
+    case 0x14: case 0x15: case 0x16: case 0x17: {   /* FTOI0/4/12/15: x >= 2^31 saturates to 0x7fffffff, cvtt gives 0x80000000 below -2^31 */
         static const float sc[4] = { 1.0f, 16.0f, 4096.0f, 32768.0f };
         o->kind = 3; o->reg = ft;
-        for (c = 0; c < 4; c++) {
-            float x = S[c] * sc[op & 3];
-            o->u[c] = x >= 2147483647.0f ? 0x7fffffffu : x <= -2147483648.0f ? 0x80000000u : (u32)(s32)x;
-        }
+        f4 x = _mm_mul_ps(S, _mm_set1_ps(sc[op & 3]));
+        __m128i r = _mm_cvttps_epi32(x), big = _mm_castps_si128(_mm_cmpge_ps(x, _mm_set1_ps(2147483648.0f)));
+        o->r = _mm_castsi128_ps(_mm_or_si128(_mm_andnot_si128(big, r), _mm_and_si128(big, I4(0x7fffffffu))));
         return; }
-    case 0x18: case 0x19: case 0x1a: case 0x1b: for (c = 0; c < 4; c++) R[c] = S[c] * tb; break;
-    case 0x1c: for (c = 0; c < 4; c++) R[c] = S[c] * q; break;
-    case 0x1d: o->kind = 1; o->reg = ft; for (c = 0; c < 4; c++) R[c] = fabsf(S[c]); return;   /* ABS */
-    case 0x1e: for (c = 0; c < 4; c++) R[c] = S[c] * I; break;
+    case 0x18: case 0x19: case 0x1a: case 0x1b: R = _mm_mul_ps(S, tb); break;
+    case 0x1c: R = _mm_mul_ps(S, q); break;
+    case 0x1d: o->kind = 1; o->reg = ft; o->r = _mm_and_ps(S, _mm_castsi128_ps(I4(0x7fffffffu))); return;   /* ABS */
     case 0x1f: {   /* CLIPw.xyz fs, ft */
-        float wv = fabsf(T[3]); u32 f = 0;
-        if (S[0] > wv) f |= 1; if (S[0] < -wv) f |= 2;
-        if (S[1] > wv) f |= 4; if (S[1] < -wv) f |= 8;
-        if (S[2] > wv) f |= 16; if (S[2] < -wv) f |= 32;
+        float s[4]; _mm_storeu_ps(s, S);
+        float wv = fabsf(_mm_cvtss_f32(_mm_shuffle_ps(T, T, 0xff))); u32 f = 0;
+        if (s[0] > wv) f |= 1; if (s[0] < -wv) f |= 2;
+        if (s[1] > wv) f |= 4; if (s[1] < -wv) f |= 8;
+        if (s[2] > wv) f |= 16; if (s[2] < -wv) f |= 32;
         o->kind = 4; o->clip = f; return; }
-    case 0x20: for (c = 0; c < 4; c++) R[c] = S[c] + q; break;
-    case 0x21: for (c = 0; c < 4; c++) R[c] = A[c] + fx(S[c] * q); break;
-    case 0x22: for (c = 0; c < 4; c++) R[c] = S[c] + I; break;
-    case 0x23: for (c = 0; c < 4; c++) R[c] = A[c] + fx(S[c] * I); break;
-    case 0x24: for (c = 0; c < 4; c++) R[c] = S[c] - q; break;
-    case 0x25: for (c = 0; c < 4; c++) R[c] = A[c] - fx(S[c] * q); break;
-    case 0x26: for (c = 0; c < 4; c++) R[c] = S[c] - I; break;
-    case 0x27: for (c = 0; c < 4; c++) R[c] = A[c] - fx(S[c] * I); break;
-    case 0x28: for (c = 0; c < 4; c++) R[c] = S[c] + T[c]; break;
-    case 0x29: for (c = 0; c < 4; c++) R[c] = A[c] + fx(S[c] * T[c]); break;
-    case 0x2a: for (c = 0; c < 4; c++) R[c] = S[c] * T[c]; break;
-    case 0x2c: for (c = 0; c < 4; c++) R[c] = S[c] - T[c]; break;
-    case 0x2d: for (c = 0; c < 4; c++) R[c] = A[c] - fx(S[c] * T[c]); break;
-    case 0x2e: R[0] = S[1] * T[2]; R[1] = S[2] * T[0]; R[2] = S[0] * T[1]; R[3] = 0; o->dest = dest = 14; break;   /* OPMULA */
+    case 0x1e: R = _mm_mul_ps(S, I); break;
+    case 0x20: R = _mm_add_ps(S, q); break;
+    case 0x21: R = MADD(S, q); break;
+    case 0x22: R = _mm_add_ps(S, I); break;
+    case 0x23: R = MADD(S, I); break;
+    case 0x24: R = _mm_sub_ps(S, q); break;
+    case 0x25: R = MSUB(S, q); break;
+    case 0x26: R = _mm_sub_ps(S, I); break;
+    case 0x27: R = MSUB(S, I); break;
+    case 0x28: R = _mm_add_ps(S, T); break;
+    case 0x29: R = MADD(S, T); break;
+    case 0x2a: R = _mm_mul_ps(S, T); break;
+    case 0x2c: R = _mm_sub_ps(S, T); break;
+    case 0x2d: R = MSUB(S, T); break;
+    case 0x2e: R = _mm_mul_ps(YZX(S), ZXY(T)); o->dest = dest = 14; break;   /* OPMULA */
     case 0x2f: o->kind = 0; return;   /* NOP */
     default: o->kind = 0; { static int once; if (!once++) LOG("vu: unknown upper %08x\n", w); } return;
     }
-    for (c = 0; c < 4; c++) R[c] = fx(R[c]);
+#undef MADD
+#undef MSUB
+#undef YZX
+#undef ZXY
+    o->r = fx4(R);
     o->flags = 1;
 }
 
 /* fl = 0: the recompiler proved nothing reads this MAC/status update (tools/recomp_vu.py flag_liveness) */
 AI void upper_commit_fl(vu_t *v, const upres *o, int fl) {
     switch (o->kind) {
-    case 1: if (o->reg) for (int c = 0; c < 4; c++) if (has(o->dest, c)) VFP(v)[o->reg].f[c] = o->r[c]; break;
-    case 2: for (int c = 0; c < 4; c++) if (has(o->dest, c)) ACCP(v)->f[c] = o->r[c]; break;
-    case 3: if (o->reg) for (int c = 0; c < 4; c++) if (has(o->dest, c)) VFP(v)[o->reg].u[c] = o->u[c]; break;
+    case 1: case 3: if (o->reg) st4(VFP(v)[o->reg].f, o->r, o->dest); break;
+    case 2: st4(ACCP(v)->f, o->r, o->dest); break;
     case 4: VIP(v)[18] = ((VIP(v)[18] << 6) | o->clip) & 0xffffff; break;
     }
     if (o->flags && fl) set_flags(v, o->dest, o->r);
@@ -227,14 +271,14 @@ static void xgkick(vu_t *v, u32 addr) {
 }
 
 /* ---- EFU ------------------------------------------------------------------------- */
-static void efu(vu_t *v, float r, int lat) { v->p_pend = ((fr){ .f = fx(r) }).u; v->p_wait = lat; }
+AI void efu(vu_t *v, float r, int lat) { v->p_pend = ((fr){ .f = fx(r) }).u; v->p_wait = lat; }
 
 /* ---- lower ------------------------------------------------------------------------ */
 static inline s32 imm11(u32 w) { s32 x = w & 0x7ff; return x & 0x400 ? x - 0x800 : x; }
-static inline u16 VI(vu_t *v, int n) { return n ? (u16)VIP(v)[n] : 0; }
-static inline void setvi(vu_t *v, int n, u32 x) { if (n && n < 16) VIP(v)[n] = x & 0xffff; }
+AI u16 VI(vu_t *v, int n) { return n ? (u16)VIP(v)[n] : 0; }
+AI void setvi(vu_t *v, int n, u32 x) { if (n && n < 16) VIP(v)[n] = x & 0xffff; }
 
-static void q_set(vu_t *v, float r, int lat) {
+AI void q_set(vu_t *v, float r, int lat) {
     if (v->q_wait) { QP(v)->u = v->q_pend; }
     v->q_pend = ((fr){ .f = fx(r) }).u; v->q_wait = lat;
 }
@@ -322,7 +366,7 @@ AI int lower(vu_t *v, u32 w, u32 pc, u32 *target, int vu) {
     case 0x64: if (ft) for (int c = 0; c < 4; c++) if (has(dest, c)) VFP(v)[ft].u[c] = v->p; return 0;   /* MFP */
     case 0x68: setvi(v, it, vu ? vif1_top_value() : 0); return 0;                              /* XTOP */
     case 0x69: setvi(v, it, vu ? vif1_itop_value() : vif0_itop_value()); return 0;             /* XITOP */
-    case 0x6c: if (vu && !vu_no_kick) xgkick(v, VI(v, is)); return 0;                                         /* XGKICK */
+    case 0x6c: if (vu && !vu_no_kick) xgkick(&VU[1], VI(v, is)); return 0;                                         /* XGKICK */
     case 0x7b: if (v->p_wait) { v->p = v->p_pend; v->p_wait = 0; } return 0;                   /* WAITP */
     }
     vfget(v, fs, S);
@@ -396,10 +440,15 @@ static void vu1_code_check(u32 pc) {
 }
 
 /* ---- recompiled VU1 programs (tools/recomp_vu.py -> gen_vu/vu1_rec.h) ----------------
- * VU_PAIR is one pair, the same steps as the interpreter loop below. */
-#define VU_PAIR(P, LO, HI, FL) do {                                                  \
+ * VU_PAIR is one pair, the same steps as the interpreter loop below. FL: keep
+ * the flag update; CL: the sources are clamped already (upper()). VU_PAIR_JRG
+ * is the delay slot of a JR/JALR: a target outside OK (the run entries and
+ * return points the clamp analysis starts from) runs in the interpreter. */
+#define VU_PAIR(P, LO, HI, FL, CL) VU_PAIR_G(P, LO, HI, FL, CL, (const u8 *)0)
+#define VU_PAIR_JRG(P, LO, HI, FL, CL, OK) VU_PAIR_G(P, LO, HI, FL, CL, OK)
+#define VU_PAIR_G(P, LO, HI, FL, CL, OK) do {                                        \
         upres up_; u32 tg_ = 0; int br_ = 0;                                         \
-        upper(v, (HI), &up_);                                                        \
+        upper(v, (HI), &up_, (CL));                                                  \
         if ((HI) & 0x80000000u) IP(v)->u = (LO);                                      \
         else br_ = lower(v, (LO), (P), &tg_, 1);                                     \
         upper_commit_fl(v, &up_, (FL));                                              \
@@ -413,20 +462,42 @@ static void vu1_code_check(u32 pc) {
         if ((HI) & 0x40000000u) ea = 0;                                              \
         if (next != (P) + 8) {                                                       \
             if (++guard > 50000000) goto out;                                        \
+            if ((OK) && !(OK)[(next & 0x3ff8) >> 3]) goto fb;                        \
             goto *L[(next & 0x3ff8) >> 3];                                           \
         }                                                                            \
     } while (0)
 /* a pair the recompiler proved is no branch, has no E bit and does not follow
  * one (tools/recomp_vu.py plain_pairs): bp is 0 and ea -1 here, so only the
  * work and the Q/P countdowns remain; it falls through to the next pair */
-#define VU_PAIR_PLAIN(P, LO, HI, FL) do {                                            \
+#define VU_PAIR_PLAIN(P, LO, HI, FL, CL) do {                                        \
         upres up_; u32 tg_ = 0;                                                      \
-        upper(v, (HI), &up_);                                                        \
+        upper(v, (HI), &up_, (CL));                                                  \
         if ((HI) & 0x80000000u) IP(v)->u = (LO);                                      \
         else (void)lower(v, (LO), (P), &tg_, 1);                                     \
         upper_commit_fl(v, &up_, (FL));                                              \
         if (v->q_wait && --v->q_wait == 0) QP(v)->u = v->q_pend;                      \
         if (v->p_wait && --v->p_wait == 0) v->p = v->p_pend;                         \
+    } while (0)
+/* A recompiled chunk works on a local copy of VU1's pipeline state (Q/P
+ * countdowns, status, MAC, P): clang keeps it in registers across the pairs,
+ * where VU[1]'s fields were loaded and stored at every pair. The register
+ * files stay the globals (rf1). VU_REC_LEAVE writes the copy back before the
+ * chunk returns or hands over to the interpreter. */
+#define VU_REC_ENTER                                                                  \
+    vu_t lv_; lv_.rf1 = 1; lv_.p = VU[1].p; lv_.status = VU[1].status;                \
+    lv_.mac = VU[1].mac; lv_.q_pend = VU[1].q_pend; lv_.p_pend = VU[1].p_pend;        \
+    lv_.q_wait = VU[1].q_wait; lv_.p_wait = VU[1].p_wait; lv_.tpc = VU[1].tpc;        \
+    vu_t *const v = &lv_
+/* VU_REC_LOCAL_VF: the chunk also keeps the VF registers it uses in a local
+ * array (copied in after this, back before it leaves: tools/recomp_vu.py);
+ * the other register files stay the globals, now through constant pointers. */
+#define VU_REC_LOCAL_VF(arr)                                                          \
+    vf128 arr[32]; lv_.rf1 = 0; lv_.vf = arr; lv_.vi = vu1_vi; lv_.acc = &vu1_acc;    \
+    lv_.q = &vu1_q; lv_.i = &vu1_i; lv_.mem = vu1_mem; lv_.qmask = 0x3ff
+#define VU_REC_LEAVE do {                                                             \
+        VU[1].p = lv_.p; VU[1].status = lv_.status; VU[1].mac = lv_.mac;             \
+        VU[1].q_pend = lv_.q_pend; VU[1].p_pend = lv_.p_pend;                         \
+        VU[1].q_wait = lv_.q_wait; VU[1].p_wait = lv_.p_wait; VU[1].tpc = lv_.tpc;    \
     } while (0)
 static void vu_interp_state(vu_t *v, u32 pc, int n, int end_after, int branch_pending, u32 branch_to);
 static void vu_interp(vu_t *v, u32 pc, int n) { vu_interp_state(v, pc, n, -1, 0, 0); }
@@ -529,7 +600,7 @@ static void vu_interp_state(vu_t *v, u32 pc, int n, int end_after, int branch_pe
         memcpy(&lo, v->code + pc, 4); memcpy(&hi, v->code + pc + 4, 4);
         v->pairs++;
         upres up;
-        upper(v, hi, &up);
+        upper(v, hi, &up, 0);
         u32 target = 0; int br = 0;
         if (hi & 0x80000000u) { IP(v)->u = lo; }               /* I bit: lower word is the I constant */
         else br = lower(v, lo, pc, &target, n);
