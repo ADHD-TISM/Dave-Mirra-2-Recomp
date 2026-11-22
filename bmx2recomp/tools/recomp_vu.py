@@ -142,28 +142,19 @@ def plain_pairs(code, live):
 # every op. A register lane holding an upper op's result is already clamped,
 # and fx is idempotent, so where every lane of fs (ft) is proven clamped at a
 # pair, upper() skips the clamp (the CL argument, bit 0 fs, bit 1 ft).
-# Forward dataflow, meet = AND over predecessors, per register a 4-bit lane
-# mask. Pairs entered from outside the analysis (run entries and BAL/JALR
-# return points: the set U) start with nothing clamped. A JR/JALR through a
-# register that only BAL/JALR write lands on a return point; any other JR gets
-# a run-time guard (VU_PAIR_JRG on its delay slot) that sends a target outside
-# U to the interpreter, so every edge into a generated pair is known.
-def lower_vi_writes(lo, hi):
-    """VI registers a lower op writes, and whether it is a BAL/JALR link"""
-    if hi & 0x80000000: return set(), False
-    op, it, is_, id_ = lo >> 25, (lo >> 16) & 31, (lo >> 11) & 31, (lo >> 6) & 31
-    if op in (0x21, 0x25): return {it}, True
-    if op in (0x04, 0x08, 0x09, 0x14, 0x16, 0x17, 0x18, 0x1a, 0x1b, 0x1c): return {it}, False
-    if op != 0x40: return set(), False
-    fn = lo & 63
-    if fn in (0x30, 0x31, 0x34, 0x35): return {id_}, False
-    if fn == 0x32: return {it}, False
-    if fn < 0x3c: return set(), False
-    x = ((lo >> 4) & 0x7c) | (lo & 3)
-    if x in (0x34, 0x36): return {is_}, False          # LQI / LQD step is
-    if x in (0x35, 0x37, 0x3c, 0x3e, 0x68, 0x69): return {it}, False   # SQI/SQD step it; MTIR ILWR XTOP XITOP
-    return set(), False
-
+# Forward must-analysis, meet = AND over predecessors, per register a 4-bit
+# lane mask. The edges into a pair must all be modelled, or the pair must start
+# with nothing clamped (the set U):
+# - U holds the recorded run entries, BAL/JALR return points, the pairs after
+#   JR delay slots and pairs no edge reaches (more in U only costs precision). A run that starts anywhere else is interpreted (the dispatcher
+#   checks {fn}_ok), as is a JR/JALR to a pair outside U: every JR/JALR delay
+#   slot is VU_PAIR_JRG (VI registers carry over between runs and are reloaded
+#   with ILW, so no JR target is trusted).
+# - Every pair keeps its p -> p + 8 edge, also after an E bit or in a B/BAL/JR
+#   delay slot: those pairs may also be reached by a jump, and then they fall
+#   through. An extra edge only costs precision.
+# - A branch in a branch delay slot (the second delay slot is the first
+#   branch's target) is not modelled: then no clamp is skipped.
 def vf_effect(lo, hi, st):
     """register lane masks after the pair (lower first, then upper: the upper wins)"""
     st = dict(st)
@@ -195,46 +186,37 @@ def vf_effect(lo, hi, st):
 
 def clamp_analysis(code, live, entries):
     def w2(p): return int.from_bytes(code[p:p + 4], 'little'), int.from_bytes(code[p + 4:p + 8], 'little')
-    link, other = set(), set()
-    for p in live:
-        regs, is_link = lower_vi_writes(*w2(p))
-        (link if is_link else other).update(regs)
     U = {e & 0x3ff8 for e in entries}
-    guard = set()                       # delay slots of JRs whose target must be checked
+    guard = set()                       # JR/JALR delay slots: the target is checked against U
     for p in live:
         lo, hi = w2(p)
-        if hi & 0x80000000: continue
+        if not is_branch(lo, hi): continue
         op = lo >> 25
         if op in (0x21, 0x25): U.add((p + 16) & 0x3ff8)
         if op in (0x24, 0x25):
-            r = (lo >> 11) & 31
-            if not (r in link and r not in other): guard.add((p + 8) & 0x3ff8)
+            guard.add((p + 8) & 0x3ff8)
+            U.add((p + 16) & 0x3ff8)    # after a JR's delay slot: the game returns there through an ILW'd vi15
+    nested = any(is_branch(*w2(p)) and is_branch(*w2((p - 8) & 0x3ff8)) for p in live)
     preds = {p: [] for p in live}
     for p in live:
-        lo, hi = w2(p)
         prev = (p - 8) & 0x3ff8
         succ = [(p + 8) & 0x3ff8]
         if prev in live:
             plo, phi = w2(prev)
-            if phi & 0x40000000: succ = []                       # p runs after an E bit: the run ends
-            elif not phi & 0x80000000:
-                pop = plo >> 25
-                if pop in (0x20, 0x21) or 0x28 <= pop <= 0x2f:
-                    succ.append((prev + 8 + imm11(plo) * 8) & 0x3ff8)
-                    if pop in (0x20, 0x21): succ.remove((p + 8) & 0x3ff8)
-                if pop in (0x24, 0x25): succ = []                # JR/JALR: lands in U only
+            if is_branch(plo, phi) and (plo >> 25) not in (0x24, 0x25):
+                succ.append((prev + 8 + imm11(plo) * 8) & 0x3ff8)     # p is the delay slot
         for q in succ:
             if q in live: preds[q].append(p)
-    # a pair no known edge reaches (after a JR delay slot: a target loaded with
-    # ILW) starts with nothing clamped anyway, so JRs may land there too
     U |= {p for p in live if not preds[p]}
+    if nested:
+        return {p: 0 for p in live}, U, guard
     ALL = {r: 15 for r in range(1, 32)}
-    inn = {p: ({} if p in U or not preds[p] else dict(ALL)) for p in live}
+    inn = {p: ({} if p in U else dict(ALL)) for p in live}
     changed = True
     while changed:
         changed = False
         for p in sorted(live):
-            if p in U or not preds[p]: continue
+            if p in U: continue
             m = dict(ALL)
             for q in preds[p]:
                 o = vf_effect(*w2(q), inn[q])
@@ -280,11 +262,10 @@ for path in snaps:
     order = sorted(live)
     chunks = [order[i:i + CHUNK] for i in range(0, len(order), CHUNK)]
     owner = {}
-    if guard:
-        lines.append(f'static const u8 {fn}_jr_ok[{npairs}] = {{   /* JR targets the clamp analysis allows (run entries, return points) */')
-        for i in range(0, npairs, 32):
-            lines.append('    ' + ','.join('1' if (i + k) * 8 in U else '0' for k in range(32)) + ',')
-        lines.append('};')
+    lines.append(f'static const u8 {fn}_ok[{npairs}] = {{   /* where a run or a JR may enter (clamp_analysis U) */')
+    for i in range(0, npairs, 32):
+        lines.append('    ' + ','.join('1' if (i + k) * 8 in U else '0' for k in range(32)) + ',')
+    lines.append('};')
     for c, ps in enumerate(chunks):
         for p in ps: owner[p] = c
     for c, ps in enumerate(chunks):
@@ -313,7 +294,7 @@ for path in snaps:
             lo = int.from_bytes(code[p:p + 4], 'little')
             hi = int.from_bytes(code[p + 4:p + 8], 'little')
             mac = 'VU_PAIR_PLAIN' if p in plain else 'VU_PAIR_JRG' if p in guard else 'VU_PAIR'
-            extra = f', {fn}_jr_ok' if p in guard else ''
+            extra = f', {fn}_ok' if p in guard else ''
             lines.append(f'p{p:04x}: {mac}(0x{p:04x}u, 0x{lo:08x}u, 0x{hi:08x}u, {1 if p in keepf else 0}, {cl[p]}{extra});')
             nxt = (p + 8) & 0x3ff8
             following = ps[k + 1] if k + 1 < len(ps) else None
@@ -331,6 +312,7 @@ for path in snaps:
         lines.append('    ' + ', '.join(f'{fn}_{owner[(i + k) * 8]}' if (i + k) * 8 in owner else '0' for k in range(8)) + ',')
     lines.append('};')
     lines.append(f'static void {fn}(vu_t *v, u32 pc) {{')
+    lines.append(f'    if (!{fn}_ok[(pc & 0x3ff8) >> 3]) {{ vu_rec_new_entry(v, pc); return; }}   /* not a recorded entry */')
     lines.append('    vu_rs s = { -1, 0, 0, pc, 0 };')
     lines.append('    for (;;) {')
     lines.append(f'        int (*f)(vu_t *, vu_rs *) = {fn}_chunk[(s.next & 0x3ff8) >> 3];')

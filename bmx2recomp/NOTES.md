@@ -794,10 +794,14 @@ programs ran (another game, many Dave Mirra 1 runs, YouTube). Findings:
     per-lane code on 4M random words and registers (denormals, inf, NaN).
   - recomp_vu.py clamp_analysis: a forward dataflow of which VF lanes hold
     clamped values; where all 4 lanes of fs / ft are clamped, upper() skips
-    fx4 (CL argument). Run entries, BAL return points and pairs no edge
-    reaches start unclamped. JR/JALR targets are not known statically (vi15
-    is also reloaded with ILW), so their delay slots are VU_PAIR_JRG: a target
-    outside that set runs in the interpreter (none in the ride).
+    fx4 (CL argument). Pairs entered from outside the model (set U: recorded
+    run entries, BAL/JALR return points, pairs after a JR delay slot, pairs no
+    edge reaches) start unclamped; every pair keeps its p -> p+8 edge; a
+    branch in a delay slot turns the skip off. A run starting outside U is
+    interpreted (vu_rec_new_entry logs it: record it with VU_RECORD). JR/JALR
+    targets are not known statically (vi15 is also reloaded with ILW), so
+    every JR/JALR delay slot is VU_PAIR_JRG: a taken JR to a pair outside U
+    runs in the interpreter (none in the ride or the crawls).
   - Recompiled chunks keep the Q/P countdowns, status, MAC and P in a local
     vu_t (VU_REC_ENTER / VU_REC_LEAVE) and the VF registers they name in a
     local array (VU_REC_LOCAL_VF), copied back at every exit. VUSEL now tests

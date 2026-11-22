@@ -455,14 +455,15 @@ static void vu1_code_check(u32 pc) {
         if (v->q_wait && --v->q_wait == 0) QP(v)->u = v->q_pend;                      \
         if (v->p_wait && --v->p_wait == 0) v->p = v->p_pend;                         \
         next = (P) + 8;                                                              \
+        int jr_ = bp;                                                                \
         if (bp) { next = bt; bp = 0; }                                               \
         if (br_) { bt = tg_; bp = 1; }                                               \
         if (ea == 0) { v->tpc = next; goto out; }                                    \
         if (ea > 0) ea--;                                                            \
         if ((HI) & 0x40000000u) ea = 0;                                              \
+        if ((OK) && jr_ && !(OK)[(next & 0x3ff8) >> 3]) goto fb;   /* also to P + 8 */\
         if (next != (P) + 8) {                                                       \
             if (++guard > 50000000) goto out;                                        \
-            if ((OK) && !(OK)[(next & 0x3ff8) >> 3]) goto fb;                        \
             goto *L[(next & 0x3ff8) >> 3];                                           \
         }                                                                            \
     } while (0)
@@ -510,6 +511,15 @@ static void vu_rec_fallback(vu_t *v, u32 next, int ea, int bp, u32 bt) {
     for (k = 0; k < nseen && seen[k] != p; k++) {}
     if (k == nseen && nseen < 64) { seen[nseen++] = p; LOG("vu: recompiled VU1 code jumped to %04x, not generated (add it as an entry)\n", p); }
     vu_interp_state(v, next, 1, ea, bp, bt);
+}
+/* a run starts at a pc that was not recorded as an entry (VU_RECORD): the
+ * clamp analysis did not start from it, so it is interpreted */
+static void vu_rec_new_entry(vu_t *v, u32 pc) {
+    static u16 seen[64]; static int nseen;
+    u16 p = (u16)(pc & 0x3ff8); int k;
+    for (k = 0; k < nseen && seen[k] != p; k++) {}
+    if (k == nseen && nseen < 64) { seen[nseen++] = p; LOG("vu: VU1 run starts at %04x, not a recorded entry: interpreted (record it with VU_RECORD)\n", p); }
+    vu_interp(v, pc, 1);
 }
 #if __has_include("vu1_rec.h")
 #include "vu1_rec.h"
