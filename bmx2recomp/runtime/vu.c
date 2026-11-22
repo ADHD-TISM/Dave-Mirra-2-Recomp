@@ -32,6 +32,18 @@ static fr vu1_q, vu1_i;
 static vu_t VU[2];
 static int vu_ready;
 static int vu_no_kick;          /* VU_CHECK: the reference run must not send GIF data */
+/* Register files: VU1 always uses the fixed arrays below. The recompiled VU1
+ * chunks run with v = &VU[1] known at compile time, so these fold to the
+ * globals and the compiler knows no store to them changes any other (with
+ * v->vf etc. through pointers every store forced the pointers to be reloaded). */
+#define VUSEL(v, one, f) ((v) == &VU[1] ? (one) : (v)->f)
+#define VFP(v)   VUSEL(v, vu1_vf, vf)
+#define VIP(v)   VUSEL(v, vu1_vi, vi)
+#define ACCP(v)  VUSEL(v, &vu1_acc, acc)
+#define QP(v)    VUSEL(v, &vu1_q, q)
+#define IP(v)    VUSEL(v, &vu1_i, i)
+#define MEMP(v)  VUSEL(v, vu1_mem, mem)
+#define QMASK(v) ((v) == &VU[1] ? 0x3ffu : (v)->qmask)
 
 static void vu_setup(void) {
     if (vu_ready) return;
@@ -46,11 +58,11 @@ static void vu_setup(void) {
 #define AI static inline __attribute__((always_inline))
 static inline float fx(float x) { return fpu_fix(x); }
 static inline int has(int dest, int c) { return (dest >> (3 - c)) & 1; }
-static inline u32 *qptr(vu_t *v, u32 a) { return (u32 *)(v->mem + ((a & v->qmask) << 4)); }
+static inline u32 *qptr(vu_t *v, u32 a) { return (u32 *)(MEMP(v) + ((a & QMASK(v)) << 4)); }
 
 AI void vfget(vu_t *v, int n, float *o) {
     if (n == 0) { o[0] = o[1] = o[2] = 0; o[3] = 1; return; }
-    for (int c = 0; c < 4; c++) o[c] = fx(v->vf[n].f[c]);
+    for (int c = 0; c < 4; c++) o[c] = fx(VFP(v)[n].f[c]);
 }
 
 AI void set_flags(vu_t *v, int dest, const float *r) {
@@ -66,7 +78,7 @@ AI void set_flags(vu_t *v, int dest, const float *r) {
     if (mac & 0x0f) st |= 1 | 0x40;
     if (mac & 0xf0) st |= 2 | 0x80;
     v->status = st | (v->status & 0x30);
-    v->vi[17] = v->mac; v->vi[16] = v->status;
+    VIP(v)[17] = v->mac; VIP(v)[16] = v->status;
 }
 
 /* ---- upper ------------------------------------------------------------------- */
@@ -76,8 +88,8 @@ AI void upper(vu_t *v, u32 w, upres *o) {
     int dest = (w >> 21) & 15, ft = (w >> 16) & 31, fs = (w >> 11) & 31, fd = (w >> 6) & 31, fn = w & 63, bc = w & 3;
     float S[4], T[4], A[4], *R = o->r;
     vfget(v, fs, S); vfget(v, ft, T);
-    for (int c = 0; c < 4; c++) A[c] = v->acc->f[c];
-    float q = v->q->f, I = v->i->f;
+    for (int c = 0; c < 4; c++) A[c] = ACCP(v)->f[c];
+    float q = QP(v)->f, I = IP(v)->f;
     int c, flags = 1;
     o->kind = 0; o->dest = dest; o->reg = fd; o->flags = 0;
     if (fn < 0x3c) {
@@ -128,7 +140,7 @@ AI void upper(vu_t *v, u32 w, upres *o) {
     case 0x10: case 0x11: case 0x12: case 0x13: {   /* ITOF0/4/12/15 */
         static const float sc[4] = { 1.0f, 1.0f / 16, 1.0f / 4096, 1.0f / 32768 };
         o->kind = 3; o->reg = ft;
-        for (c = 0; c < 4; c++) { fr f; f.f = (float)v->vf[fs].s[c] * sc[op & 3]; o->u[c] = f.u; }
+        for (c = 0; c < 4; c++) { fr f; f.f = (float)VFP(v)[fs].s[c] * sc[op & 3]; o->u[c] = f.u; }
         if (fs == 0) { o->u[0] = o->u[1] = o->u[2] = 0; o->u[3] = 0; }
         return; }
     case 0x14: case 0x15: case 0x16: case 0x17: {   /* FTOI0/4/12/15 */
@@ -173,10 +185,10 @@ AI void upper(vu_t *v, u32 w, upres *o) {
 /* fl = 0: the recompiler proved nothing reads this MAC/status update (tools/recomp_vu.py flag_liveness) */
 AI void upper_commit_fl(vu_t *v, const upres *o, int fl) {
     switch (o->kind) {
-    case 1: if (o->reg) for (int c = 0; c < 4; c++) if (has(o->dest, c)) v->vf[o->reg].f[c] = o->r[c]; break;
-    case 2: for (int c = 0; c < 4; c++) if (has(o->dest, c)) v->acc->f[c] = o->r[c]; break;
-    case 3: if (o->reg) for (int c = 0; c < 4; c++) if (has(o->dest, c)) v->vf[o->reg].u[c] = o->u[c]; break;
-    case 4: v->vi[18] = ((v->vi[18] << 6) | o->clip) & 0xffffff; break;
+    case 1: if (o->reg) for (int c = 0; c < 4; c++) if (has(o->dest, c)) VFP(v)[o->reg].f[c] = o->r[c]; break;
+    case 2: for (int c = 0; c < 4; c++) if (has(o->dest, c)) ACCP(v)->f[c] = o->r[c]; break;
+    case 3: if (o->reg) for (int c = 0; c < 4; c++) if (has(o->dest, c)) VFP(v)[o->reg].u[c] = o->u[c]; break;
+    case 4: VIP(v)[18] = ((VIP(v)[18] << 6) | o->clip) & 0xffffff; break;
     }
     if (o->flags && fl) set_flags(v, o->dest, o->r);
 }
@@ -204,7 +216,7 @@ static void xgkick(vu_t *v, u32 addr) {
         if (!nreg) nreg = 16;
         u32 n = flg == 0 ? nloop * nreg : flg == 1 ? (nloop * nreg + 1) / 2 : nloop;
         for (u32 k = 0; k <= n; ) {   /* in runs that do not wrap at the end of VU memory */
-            u32 a = (addr + k) & v->qmask, run = v->qmask + 1 - a;
+            u32 a = (addr + k) & QMASK(v), run = QMASK(v) + 1 - a;
             if (run > n + 1 - k) run = n + 1 - k;
             gif_transfer((const u8 *)qptr(v, a), run, 1);
             k += run;
@@ -219,11 +231,11 @@ static void efu(vu_t *v, float r, int lat) { v->p_pend = ((fr){ .f = fx(r) }).u;
 
 /* ---- lower ------------------------------------------------------------------------ */
 static inline s32 imm11(u32 w) { s32 x = w & 0x7ff; return x & 0x400 ? x - 0x800 : x; }
-static inline u16 VI(vu_t *v, int n) { return n ? (u16)v->vi[n] : 0; }
-static inline void setvi(vu_t *v, int n, u32 x) { if (n && n < 16) v->vi[n] = x & 0xffff; }
+static inline u16 VI(vu_t *v, int n) { return n ? (u16)VIP(v)[n] : 0; }
+static inline void setvi(vu_t *v, int n, u32 x) { if (n && n < 16) VIP(v)[n] = x & 0xffff; }
 
 static void q_set(vu_t *v, float r, int lat) {
-    if (v->q_wait) { v->q->u = v->q_pend; }
+    if (v->q_wait) { QP(v)->u = v->q_pend; }
     v->q_pend = ((fr){ .f = fx(r) }).u; v->q_wait = lat;
 }
 
@@ -232,25 +244,25 @@ AI int lower(vu_t *v, u32 w, u32 pc, u32 *target, int vu) {
     int op = w >> 25, dest = (w >> 21) & 15, it = (w >> 16) & 31, is = (w >> 11) & 31, id = (w >> 6) & 31;
     float S[4];
     switch (op) {
-    case 0x00: { u32 *m = qptr(v, VI(v, is) + imm11(w)); if (it) for (int c = 0; c < 4; c++) if (has(dest, c)) v->vf[it].u[c] = m[c]; return 0; }   /* LQ */
-    case 0x01: { u32 *m = qptr(v, VI(v, it) + imm11(w)); vf128 s = v->vf[is]; if (!is) { s.u[0] = s.u[1] = s.u[2] = 0; s.f[3] = 1; }
+    case 0x00: { u32 *m = qptr(v, VI(v, is) + imm11(w)); if (it) for (int c = 0; c < 4; c++) if (has(dest, c)) VFP(v)[it].u[c] = m[c]; return 0; }   /* LQ */
+    case 0x01: { u32 *m = qptr(v, VI(v, it) + imm11(w)); vf128 s = VFP(v)[is]; if (!is) { s.u[0] = s.u[1] = s.u[2] = 0; s.f[3] = 1; }
         for (int c = 0; c < 4; c++) if (has(dest, c)) m[c] = s.u[c]; return 0; }                                                               /* SQ */
     case 0x04: { u32 *m = qptr(v, VI(v, is) + imm11(w)); for (int c = 0; c < 4; c++) if (has(dest, c)) setvi(v, it, m[c]); return 0; }        /* ILW */
     case 0x05: { u32 *m = qptr(v, VI(v, is) + imm11(w)); for (int c = 0; c < 4; c++) if (has(dest, c)) m[c] = VI(v, it); return 0; }          /* ISW */
     case 0x08: setvi(v, it, VI(v, is) + (((w >> 10) & 0x7800) | (w & 0x7ff))); return 0;                                                        /* IADDIU */
     case 0x09: setvi(v, it, VI(v, is) - (((w >> 10) & 0x7800) | (w & 0x7ff))); return 0;                                                        /* ISUBIU */
-    case 0x10: v->vi[1] = (v->vi[18] & 0xffffff) == (w & 0xffffff); return 0;                                                                  /* FCEQ */
-    case 0x11: v->vi[18] = w & 0xffffff; return 0;                                                                                             /* FCSET */
-    case 0x12: v->vi[1] = (v->vi[18] & w & 0xffffff) != 0; return 0;                                                                           /* FCAND */
-    case 0x13: v->vi[1] = ((v->vi[18] | w) & 0xffffff) == 0xffffff; return 0;                                                                  /* FCOR */
+    case 0x10: VIP(v)[1] = (VIP(v)[18] & 0xffffff) == (w & 0xffffff); return 0;                                                                  /* FCEQ */
+    case 0x11: VIP(v)[18] = w & 0xffffff; return 0;                                                                                             /* FCSET */
+    case 0x12: VIP(v)[1] = (VIP(v)[18] & w & 0xffffff) != 0; return 0;                                                                           /* FCAND */
+    case 0x13: VIP(v)[1] = ((VIP(v)[18] | w) & 0xffffff) == 0xffffff; return 0;                                                                  /* FCOR */
     case 0x14: setvi(v, it, (v->status & 0xfff) == (((w >> 10) & 0x800) | (w & 0x7ff))); return 0;                                            /* FSEQ */
-    case 0x15: v->status = (v->status & 0x3f) | ((((w >> 10) & 0x800) | (w & 0x7ff)) & 0xfc0); v->vi[16] = v->status; return 0;              /* FSSET */
+    case 0x15: v->status = (v->status & 0x3f) | ((((w >> 10) & 0x800) | (w & 0x7ff)) & 0xfc0); VIP(v)[16] = v->status; return 0;              /* FSSET */
     case 0x16: setvi(v, it, v->status & (((w >> 10) & 0x800) | (w & 0x7ff))); return 0;                                                       /* FSAND */
     case 0x17: setvi(v, it, v->status | (((w >> 10) & 0x800) | (w & 0x7ff))); return 0;                                                       /* FSOR */
     case 0x18: setvi(v, it, (v->mac & 0xffff) == VI(v, is)); return 0;                                                                         /* FMEQ */
     case 0x1a: setvi(v, it, v->mac & VI(v, is)); return 0;                                                                                     /* FMAND */
     case 0x1b: setvi(v, it, v->mac | VI(v, is)); return 0;                                                                                     /* FMOR */
-    case 0x1c: setvi(v, it, v->vi[18] & 0xfff); return 0;                                                                                      /* FCGET */
+    case 0x1c: setvi(v, it, VIP(v)[18] & 0xfff); return 0;                                                                                      /* FCGET */
     case 0x20: *target = pc + 8 + imm11(w) * 8; return 1;                                                                                     /* B */
     case 0x21: setvi(v, it, (pc + 16) / 8); *target = pc + 8 + imm11(w) * 8; return 1;                                                         /* BAL */
     case 0x24: *target = VI(v, is) * 8; return 1;                                                                                              /* JR */
@@ -276,38 +288,38 @@ AI int lower(vu_t *v, u32 w, u32 pc, u32 *target, int vu) {
     int x = ((w >> 4) & 0x7c) | (w & 3);
     int ft = it, fs = is, fsf = (w >> 21) & 3, ftf = (w >> 23) & 3;
     switch (x) {
-    case 0x30: if (ft) { vf128 s = v->vf[fs]; if (!fs) { s.u[0] = s.u[1] = s.u[2] = 0; s.f[3] = 1; }
-        for (int c = 0; c < 4; c++) if (has(dest, c)) v->vf[ft].u[c] = s.u[c]; } return 0;   /* MOVE */
-    case 0x31: if (ft) { vf128 s = v->vf[fs]; if (!fs) { s.u[0] = s.u[1] = s.u[2] = 0; s.f[3] = 1; }
+    case 0x30: if (ft) { vf128 s = VFP(v)[fs]; if (!fs) { s.u[0] = s.u[1] = s.u[2] = 0; s.f[3] = 1; }
+        for (int c = 0; c < 4; c++) if (has(dest, c)) VFP(v)[ft].u[c] = s.u[c]; } return 0;   /* MOVE */
+    case 0x31: if (ft) { vf128 s = VFP(v)[fs]; if (!fs) { s.u[0] = s.u[1] = s.u[2] = 0; s.f[3] = 1; }
         u32 r[4] = { s.u[1], s.u[2], s.u[3], s.u[0] };
-        for (int c = 0; c < 4; c++) if (has(dest, c)) v->vf[ft].u[c] = r[c]; } return 0;     /* MR32 */
-    case 0x34: { u32 *m = qptr(v, VI(v, is)); if (ft) for (int c = 0; c < 4; c++) if (has(dest, c)) v->vf[ft].u[c] = m[c];
+        for (int c = 0; c < 4; c++) if (has(dest, c)) VFP(v)[ft].u[c] = r[c]; } return 0;     /* MR32 */
+    case 0x34: { u32 *m = qptr(v, VI(v, is)); if (ft) for (int c = 0; c < 4; c++) if (has(dest, c)) VFP(v)[ft].u[c] = m[c];
         setvi(v, is, VI(v, is) + 1); return 0; }                                                 /* LQI */
-    case 0x35: { u32 *m = qptr(v, VI(v, it)); vf128 s = v->vf[fs]; if (!fs) { s.u[0] = s.u[1] = s.u[2] = 0; s.f[3] = 1; }
+    case 0x35: { u32 *m = qptr(v, VI(v, it)); vf128 s = VFP(v)[fs]; if (!fs) { s.u[0] = s.u[1] = s.u[2] = 0; s.f[3] = 1; }
         for (int c = 0; c < 4; c++) if (has(dest, c)) m[c] = s.u[c]; setvi(v, it, VI(v, it) + 1); return 0; }   /* SQI */
     case 0x36: { setvi(v, is, VI(v, is) - 1); u32 *m = qptr(v, VI(v, is));
-        if (ft) for (int c = 0; c < 4; c++) if (has(dest, c)) v->vf[ft].u[c] = m[c]; return 0; }   /* LQD */
-    case 0x37: { setvi(v, it, VI(v, it) - 1); u32 *m = qptr(v, VI(v, it)); vf128 s = v->vf[fs]; if (!fs) { s.u[0] = s.u[1] = s.u[2] = 0; s.f[3] = 1; }
+        if (ft) for (int c = 0; c < 4; c++) if (has(dest, c)) VFP(v)[ft].u[c] = m[c]; return 0; }   /* LQD */
+    case 0x37: { setvi(v, it, VI(v, it) - 1); u32 *m = qptr(v, VI(v, it)); vf128 s = VFP(v)[fs]; if (!fs) { s.u[0] = s.u[1] = s.u[2] = 0; s.f[3] = 1; }
         for (int c = 0; c < 4; c++) if (has(dest, c)) m[c] = s.u[c]; return 0; }               /* SQD */
     case 0x38: { float T[4]; vfget(v, fs, S); vfget(v, ft, T); float d = T[ftf], r;           /* DIV */
-        if (d == 0.0f) r = ((v->vf[fs].u[fsf] ^ v->vf[ft].u[ftf]) & 0x80000000u) ? -3.402823466e38f : 3.402823466e38f;
+        if (d == 0.0f) r = ((VFP(v)[fs].u[fsf] ^ VFP(v)[ft].u[ftf]) & 0x80000000u) ? -3.402823466e38f : 3.402823466e38f;
         else r = S[fsf] / d;
         q_set(v, r, 7); return 0; }
     case 0x39: { float T[4]; vfget(v, ft, T); q_set(v, sqrtf(fabsf(T[ftf])), 7); return 0; }  /* SQRT */
     case 0x3a: { float T[4]; vfget(v, fs, S); vfget(v, ft, T); float d = sqrtf(fabsf(T[ftf]));   /* RSQRT */
         q_set(v, d == 0.0f ? 3.402823466e38f : S[fsf] / d, 13); return 0; }
-    case 0x3b: if (v->q_wait) { v->q->u = v->q_pend; v->q_wait = 0; } return 0;              /* WAITQ */
-    case 0x3c: setvi(v, ft, v->vf[fs].u[fsf]); return 0;                                       /* MTIR */
-    case 0x3d: if (ft) for (int c = 0; c < 4; c++) if (has(dest, c)) v->vf[ft].s[c] = (s16)VI(v, fs); return 0;   /* MFIR */
+    case 0x3b: if (v->q_wait) { QP(v)->u = v->q_pend; v->q_wait = 0; } return 0;              /* WAITQ */
+    case 0x3c: setvi(v, ft, VFP(v)[fs].u[fsf]); return 0;                                       /* MTIR */
+    case 0x3d: if (ft) for (int c = 0; c < 4; c++) if (has(dest, c)) VFP(v)[ft].s[c] = (s16)VI(v, fs); return 0;   /* MFIR */
     case 0x3e: { u32 *m = qptr(v, VI(v, is)); for (int c = 0; c < 4; c++) if (has(dest, c)) setvi(v, it, m[c]); return 0; }   /* ILWR */
     case 0x3f: { u32 *m = qptr(v, VI(v, is)); for (int c = 0; c < 4; c++) if (has(dest, c)) m[c] = VI(v, it); return 0; }     /* ISWR */
-    case 0x40: case 0x41: { u32 r = v->vi[20];                                                 /* RNEXT / RGET */
-        if (x == 0x40) { int b = ((r >> 4) ^ (r >> 22)) & 1; r = ((r << 1) | b) & 0x7fffff; v->vi[20] = r; }
-        if (ft) for (int c = 0; c < 4; c++) if (has(dest, c)) v->vf[ft].u[c] = 0x3f800000u | (r & 0x7fffff);
+    case 0x40: case 0x41: { u32 r = VIP(v)[20];                                                 /* RNEXT / RGET */
+        if (x == 0x40) { int b = ((r >> 4) ^ (r >> 22)) & 1; r = ((r << 1) | b) & 0x7fffff; VIP(v)[20] = r; }
+        if (ft) for (int c = 0; c < 4; c++) if (has(dest, c)) VFP(v)[ft].u[c] = 0x3f800000u | (r & 0x7fffff);
         return 0; }
-    case 0x42: v->vi[20] = v->vf[fs].u[fsf] & 0x7fffff; return 0;                              /* RINIT */
-    case 0x43: v->vi[20] = (v->vi[20] ^ v->vf[fs].u[fsf]) & 0x7fffff; return 0;                /* RXOR */
-    case 0x64: if (ft) for (int c = 0; c < 4; c++) if (has(dest, c)) v->vf[ft].u[c] = v->p; return 0;   /* MFP */
+    case 0x42: VIP(v)[20] = VFP(v)[fs].u[fsf] & 0x7fffff; return 0;                              /* RINIT */
+    case 0x43: VIP(v)[20] = (VIP(v)[20] ^ VFP(v)[fs].u[fsf]) & 0x7fffff; return 0;                /* RXOR */
+    case 0x64: if (ft) for (int c = 0; c < 4; c++) if (has(dest, c)) VFP(v)[ft].u[c] = v->p; return 0;   /* MFP */
     case 0x68: setvi(v, it, vu ? vif1_top_value() : 0); return 0;                              /* XTOP */
     case 0x69: setvi(v, it, vu ? vif1_itop_value() : vif0_itop_value()); return 0;             /* XITOP */
     case 0x6c: if (vu && !vu_no_kick) xgkick(v, VI(v, is)); return 0;                                         /* XGKICK */
@@ -388,10 +400,10 @@ static void vu1_code_check(u32 pc) {
 #define VU_PAIR(P, LO, HI, FL) do {                                                  \
         upres up_; u32 tg_ = 0; int br_ = 0;                                         \
         upper(v, (HI), &up_);                                                        \
-        if ((HI) & 0x80000000u) v->i->u = (LO);                                      \
+        if ((HI) & 0x80000000u) IP(v)->u = (LO);                                      \
         else br_ = lower(v, (LO), (P), &tg_, 1);                                     \
         upper_commit_fl(v, &up_, (FL));                                              \
-        if (v->q_wait && --v->q_wait == 0) v->q->u = v->q_pend;                      \
+        if (v->q_wait && --v->q_wait == 0) QP(v)->u = v->q_pend;                      \
         if (v->p_wait && --v->p_wait == 0) v->p = v->p_pend;                         \
         next = (P) + 8;                                                              \
         if (bp) { next = bt; bp = 0; }                                               \
@@ -410,10 +422,10 @@ static void vu1_code_check(u32 pc) {
 #define VU_PAIR_PLAIN(P, LO, HI, FL) do {                                            \
         upres up_; u32 tg_ = 0;                                                      \
         upper(v, (HI), &up_);                                                        \
-        if ((HI) & 0x80000000u) v->i->u = (LO);                                      \
+        if ((HI) & 0x80000000u) IP(v)->u = (LO);                                      \
         else (void)lower(v, (LO), (P), &tg_, 1);                                     \
         upper_commit_fl(v, &up_, (FL));                                              \
-        if (v->q_wait && --v->q_wait == 0) v->q->u = v->q_pend;                      \
+        if (v->q_wait && --v->q_wait == 0) QP(v)->u = v->q_pend;                      \
         if (v->p_wait && --v->p_wait == 0) v->p = v->p_pend;                         \
     } while (0)
 static void vu_interp_state(vu_t *v, u32 pc, int n, int end_after, int branch_pending, u32 branch_to);
@@ -443,16 +455,16 @@ static u64 n_rec_runs, n_check_runs, n_check_bad;
 /* VU_CHECK: run the interpreter on a copy first, then the compiled code, and compare */
 typedef struct { vf128 vf[32], acc; u32 vi[32]; fr q, i; u32 p, status, mac, q_pend, p_pend, tpc; int q_wait, p_wait; u8 mem[0x4000]; } vu1_snap;
 static void snap_take(vu1_snap *s, vu_t *v) {
-    memcpy(s->vf, v->vf, sizeof s->vf); s->acc = *v->acc; memcpy(s->vi, v->vi, sizeof s->vi);
+    memcpy(s->vf, VFP(v), sizeof s->vf); s->acc = *ACCP(v); memcpy(s->vi, VIP(v), sizeof s->vi);
     s->q = *v->q; s->i = *v->i; s->p = v->p; s->status = v->status; s->mac = v->mac;
     s->q_pend = v->q_pend; s->p_pend = v->p_pend; s->q_wait = v->q_wait; s->p_wait = v->p_wait; s->tpc = v->tpc;
-    memcpy(s->mem, v->mem, sizeof s->mem);
+    memcpy(s->mem, MEMP(v), sizeof s->mem);
 }
 static void snap_put(const vu1_snap *s, vu_t *v) {
-    memcpy(v->vf, s->vf, sizeof s->vf); *v->acc = s->acc; memcpy(v->vi, s->vi, sizeof s->vi);
+    memcpy(VFP(v), s->vf, sizeof s->vf); *ACCP(v) = s->acc; memcpy(VIP(v), s->vi, sizeof s->vi);
     *v->q = s->q; *v->i = s->i; v->p = s->p; v->status = s->status; v->mac = s->mac;
     v->q_pend = s->q_pend; v->p_pend = s->p_pend; v->q_wait = s->q_wait; v->p_wait = s->p_wait; v->tpc = s->tpc;
-    memcpy(v->mem, s->mem, sizeof s->mem);
+    memcpy(MEMP(v), s->mem, sizeof s->mem);
 }
 static int snap_diff(const vu1_snap *a, const vu1_snap *b, char *why, size_t n) {
     for (int r = 0; r < 32; r++) for (int c = 0; c < 4; c++)
@@ -499,13 +511,13 @@ static void vu1_run_compiled(vu_t *v, u32 pc) {
 static void vu_run(int n, u32 pc) {
     vu_setup();
     vu_t *v = &VU[n];
-    v->status = v->vi[16] & 0xfff; v->mac = v->vi[17] & 0xffff;
+    v->status = VIP(v)[16] & 0xfff; v->mac = VIP(v)[17] & 0xffff;
     if (pc == 0xffffffffu) pc = v->tpc;
     v->runs++;
     if (n == 1) { vu1_code_check(pc & 0x3ff8); vu1_run_compiled(v, pc); }
     else vu_interp(v, pc, n);
-    v->vi[16] = v->status; v->vi[17] = v->mac;
-    if (v->q_wait) { v->q->u = v->q_pend; v->q_wait = 0; }
+    VIP(v)[16] = v->status; VIP(v)[17] = v->mac;
+    if (v->q_wait) { QP(v)->u = v->q_pend; v->q_wait = 0; }
     if (v->p_wait) { v->p = v->p_pend; v->p_wait = 0; }
 }
 
@@ -519,11 +531,11 @@ static void vu_interp_state(vu_t *v, u32 pc, int n, int end_after, int branch_pe
         upres up;
         upper(v, hi, &up);
         u32 target = 0; int br = 0;
-        if (hi & 0x80000000u) { v->i->u = lo; }               /* I bit: lower word is the I constant */
+        if (hi & 0x80000000u) { IP(v)->u = lo; }               /* I bit: lower word is the I constant */
         else br = lower(v, lo, pc, &target, n);
         upper_commit(v, &up);
-        v->vi[0] = 0;
-        if (v->q_wait && --v->q_wait == 0) v->q->u = v->q_pend;
+        VIP(v)[0] = 0;
+        if (v->q_wait && --v->q_wait == 0) QP(v)->u = v->q_pend;
         if (v->p_wait && --v->p_wait == 0) v->p = v->p_pend;
         u32 next = pc + 8;
         if (branch_pending) { next = branch_to; branch_pending = 0; }

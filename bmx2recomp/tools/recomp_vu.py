@@ -170,7 +170,8 @@ for path in snaps:
         for p in ps: owner[p] = c
     for c, ps in enumerate(chunks):
         mine = set(ps)
-        lines.append(f'static int {fn}_{c}(vu_t *v, vu_rs *s) {{   /* {ps[0]:04x}-{ps[-1]:04x} */')
+        lines.append(f'static int {fn}_{c}(vu_t *v_, vu_rs *s) {{   /* {ps[0]:04x}-{ps[-1]:04x} */')
+        lines.append('    vu_t *const v = &VU[1]; (void)v_;   /* constant: register files fold to the VU1 globals (vu.c VFP) */')
         lines.append('    static void *const L[%d] = {' % npairs)
         for i in range(0, npairs, 8):
             lines.append('        ' + ', '.join(f'&&p{(i + k) * 8:04x}' if (i + k) * 8 in mine else ('&&ex' if (i + k) * 8 in live else '&&fb')

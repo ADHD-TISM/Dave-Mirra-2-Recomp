@@ -48,6 +48,50 @@ static void clut_load(u64 tex0) {
     int n = (psm == PSMT8 || psm == PSMT8H) ? 256 : 16;
     int c16 = (cpsm == PSMCT16 || cpsm == PSMCT16S);
     gsgl_sync_vram(cbp, cbp + 31);
+    {   /* the entries read for this CLUT source, cached until its VRAM page changes
+         * (gsgl_vram_gen: host writes and target write-backs bump it) */
+        extern u32 gsgl_vram_gen(u32 b0, u32 b1);
+        static struct { u32 cbp, cpsm, csm, n, tc, gen, used; u64 stamp; u32 v[256]; } cc[32];
+        static u64 clock;
+        u32 tc = csm ? (u32)(R[TEXCLUT] & 0x3fffff) : 0, gen = gsgl_vram_gen(cbp, cbp + 31);
+        int k, hit = -1, lru = 0;
+        for (k = 0; k < 32; k++) {
+            if (cc[k].used && cc[k].cbp == cbp && cc[k].cpsm == cpsm && cc[k].csm == csm && cc[k].n == (u32)n && cc[k].tc == tc) { hit = k; break; }
+            if (!cc[k].used || cc[k].stamp < cc[lru].stamp) lru = k;
+        }
+        if (hit < 0 || cc[hit].gen != gen) {
+            k = hit >= 0 ? hit : lru;
+            cc[k].used = 1; cc[k].cbp = cbp; cc[k].cpsm = cpsm; cc[k].csm = csm; cc[k].n = (u32)n; cc[k].tc = tc; cc[k].gen = gen;
+            if (csm == 0) {
+                int w = n == 256 ? 16 : 8;
+                for (int i = 0; i < n; i++) {
+                    int p = n == 256 ? ((i & 0xe7) | ((i & 0x08) << 1) | ((i & 0x10) >> 1)) : i;
+                    cc[k].v[i] = gs_read_pixel(c16 ? cpsm : PSMCT32, cbp, 1, p % w, p / w);
+                }
+            } else {
+                u32 cbw = F(tc, 0, 6), cou = F(tc, 6, 6) * 16, cov = F(tc, 12, 10);
+                for (int i = 0; i < n; i++) cc[k].v[i] = gs_read_pixel(cpsm, cbp, cbw, cou + i, cov);
+            }
+        }
+        cc[k].stamp = ++clock;
+        const u32 *src = cc[k].v; int changed = 0;
+        for (int i = 0; i < n; i++) {
+            if (csm || c16) {
+                u16 *d = &clut[(csa * 16 + i) & 511];
+                if (*d != (u16)src[i]) { *d = (u16)src[i]; changed = 1; }
+            } else {
+                u32 o = (csa & 15) * 16 + i;
+                u16 lo = (u16)src[i], hi = (u16)(src[i] >> 16);
+                if (clut[o & 255] != lo || clut[256 + (o & 255)] != hi) { clut[o & 255] = lo; clut[256 + (o & 255)] = hi; changed = 1; }
+            }
+        }
+        if (changed) {
+            u32 h = 2166136261u;
+            for (int i = 0; i < 512; i++) h = (h ^ clut[i]) * 16777619u;
+            clut_hash = h;
+        }
+        return;
+    }
     if (csm == 0) {
         /* CSM1: 16x16 (8x2 for 4-bit) pixels; T8 entries have bits 3 and 4 swapped */
         int w = n == 256 ? 16 : 8;

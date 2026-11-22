@@ -354,6 +354,8 @@ static u32 gen_of(u32 b0, u32 b1) {
     return g;
 }
 
+u32 gsgl_vram_gen(u32 b0, u32 b1) { return gen_of(b0, b1); }   /* gs.c CLUT cache */
+
 /* ---- render targets ---------------------------------------------------------- */
 #define TH 1024          /* allocated height of every target in GS pixels */
 #define NT 32
@@ -989,7 +991,7 @@ void gsgl_flush(void) {
 
 /* ---- coherence with local memory -------------------------------------------- */
 void gsgl_sync_vram(u32 b0, u32 b1) {
-    gsgl_flush();
+    gsgl_flush();   /* always: skipping it when no target overlaps changed the picture (2026-11-22) */
     for (int i = 0; i < NT; i++)
         if (tg[i].used && tg[i].dirty && overlaps(&tg[i], b0, b1)) {
             u32 r0, r1; rows_for_blocks(&tg[i], b0, b1, &r0, &r1);
@@ -1146,7 +1148,12 @@ static void ftimes_before_swap(u64 now) {
     if (busy > 12) ft_busy12++; if (busy > 16) ft_busy16++; if (busy > ft_busy_max) ft_busy_max = busy;
     if (g_log_frames && busy > 16) LOG("frames: graphics thread busy %.1f ms at frame %llu\n", busy, (unsigned long long)g_frame);
 }
+static u64 ft_cyc0, ft_cyc1, ft_cyc_frames;   /* graphics thread CPU cycles (QueryThreadCycleTime) from frame 6500 */
 static void ftimes_after_swap(u64 t0, u64 t1) {
+    if (g_frame >= 6500) {
+        ULONG64 c; QueryThreadCycleTime(GetCurrentThread(), &c);
+        if (!ft_cyc0) ft_cyc0 = c; else { ft_cyc1 = c; ft_cyc_frames++; }
+    }
     extern u64 g_gst_idle_ticks; extern int g_log_frames;
     if (!fq_ids[0]) glGenQueries(4, fq_ids);
     double sw = qpc_ms(t1 - t0);
@@ -1166,6 +1173,7 @@ static void ftimes_after_swap(u64 t0, u64 t1) {
 static void ftimes_report(void) {
     if (!ft_n || !ft_nb) return;
     {   extern u64 g_ft_kind[8]; static const char *nm[6] = { "vif1+vu1", "gif", "vu1 start", "present", "flush", "other" };
+        if (ft_cyc_frames) LOG("gs: graphics thread %.2f Mcycles per frame from frame 6500\n", (double)(ft_cyc1 - ft_cyc0) / ft_cyc_frames / 1e6);
         LOG("gs: graphics thread ms per frame (whole run):");
         for (int k = 0; k < 6; k++) LOG(" %s %.2f", nm[k], qpc_ms(g_ft_kind[k]) / (double)fq_n);
         LOG("\n"); }

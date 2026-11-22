@@ -750,6 +750,18 @@ programs ran (another game, many Dave Mirra 1 runs, YouTube). Findings:
   branch-free fx() (slower).
 - Debug: GS_FRAME_TIMES=1 logs GPU time (timer queries), graphics thread busy
   time, swap waits, and its work per frame by command kind at exit.
+- Second round: recompiled VU1 chunks run with v = &VU[1] constant and vu.c
+  reaches the register files through VFP/VIP/ACCP/QP/IP/MEMP, which fold to
+  the VU1 globals there (~1%). CLUT loads cache the entries read per source
+  (cbp, cpsm, csm, size, TEXCLUT) until gsgl_vram_gen of the page changes, and
+  rehash the CLUT only when an entry changed (no measurable gain; frames the
+  same). Skipping gsgl_flush in gsgl_sync_vram when no dirty target overlaps
+  changed the picture and was reverted. GS_FRAME_TIMES also prints graphics
+  thread Mcycles per frame (QueryThreadCycleTime, from frame 6500): ~34.4 at
+  the end. Under a 16-thread load: slow frames 988-1260 (old) -> 557, audio
+  underruns 873-941 -> 378.
+- Test runs must set `gamepad = 0`: the user's gamepad fed input into scripted
+  runs (wrong menu path, frames differ) and could get vibration from them.
 - Left: VU programs 13 and 4 (vertex transforms) are ~27% of the thread; the
   rest of the per-pair cost is memory traffic through vu_t pointers (vf, acc,
   q_wait) and fx clamps on every lane.
