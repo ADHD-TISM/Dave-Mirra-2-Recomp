@@ -1400,10 +1400,11 @@ static void present_rect_(u32 fbp, u32 fbw, u32 psm, u32 dbx, u32 dby, u32 w, u3
  * PS2's 59.94 Hz while a 60 Hz monitor scans out at 60.00: the two drift, and
  * every ~16 s a frame is shown twice or skipped, plus uneven frame timing.
  * If the window's monitor runs at 60 Hz (or 120/180/240 Hz), swap with
- * interval refresh/60 and let SwapBuffers pace the game (pace() in kernel.c
- * then does not sleep). Other refresh rates, a hidden window, turbo,
- * NO_VSYNC=1, or a monitor driven by a different graphics chip than the
- * renderer (display_on_other_chip) keep the timer pacing with vsync off. Checked again every 120
+ * interval refresh/60 and let SwapBuffers line frames up with the scan-out
+ * (pace() in kernel.c then times 60.00 Hz instead of 59.94). Other refresh
+ * rates, a hidden window, turbo, NO_VSYNC=1, or a monitor driven by another
+ * graphics chip than the renderer (display_on_other_chip) keep the timer
+ * pacing with vsync off. Checked again every 120
  * presents, so moving the window to another monitor switches mode. */
 static int display_hz(void) {
     HMONITOR m = MonitorFromWindow(wnd, MONITOR_DEFAULTTONEAREST);

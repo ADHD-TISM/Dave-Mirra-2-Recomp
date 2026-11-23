@@ -36,8 +36,9 @@ alone there is no display), deleted after.
   gs_gl.c now exports NvOptimusEnablement and
   AmdPowerXpressRequestHighPerformance; the log line "gs: OpenGL ... (<chip>)"
   names the chip in use.
-- On the NVIDIA chip with vsync, the scripted ride (ride.txt route, 7600
-  frames, real time) had ~52 presents over 20 ms apart after frame 6600
+- On the NVIDIA chip with vsync, the scripted ride (a PAD_SCRIPT route from
+  the main menu into a level, riding from frame 6500; kept in the
+  ignored scratch file ride.txt; 7600 frames, real time) had ~52 presents over 20 ms apart after frame 6600
   (desktop: 0). Not the CPU (12% busy), not the GPU (scale 2 cut GPU frames
   over 12 ms from 455 to 10, gaps stayed), not the queue (timer at 60.6 Hz
   kept 2 frames queued, gaps stayed). Vsync off: 3. The picture is copied
@@ -281,8 +282,8 @@ frames 125 -> 40. No audio underruns in the level either way.
   interval is refresh/60 and the timer paces 60.00 Hz instead of 59.94 (the
   swap alone does not hold the rate: in a window the compositor followed the
   120 Hz primary). Off: `vsync = 0` in bmx2.ini or NO_VSYNC=1, and always
-  when the window's monitor hangs on another graphics chip than the renderer
-  (see "Two-chip laptops"). Audio: the
+  when the window's monitor is driven by another graphics chip than the
+  renderer (see "Two-chip laptops"). Audio: the
   waveOut thread skips 1 frame in 256 while more than ~64 ms is queued
   (exit line "frames dropped for drift").
 - Graphics thread (runtime/gsthread.c): VIF1, VU1, the GS front end and all
