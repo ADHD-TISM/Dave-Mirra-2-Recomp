@@ -858,10 +858,21 @@ player 2 pad); Exit game (press twice).
   g_spu_volume (spu2.c), 3D resolution through apply_scale on the presenting
   thread: every target is written back to GS memory and freed, depth buffers
   too; they return at the new scale as the game draws.
-- Settings changed in the menu are written into bmx2.ini on close
-  (config_save): each `key = value` line is replaced in place, missing keys
-  are appended. Only if a bmx2.ini was read at start-up.
-- Not in turbo or without a window. Audio is silent while paused (spu2
+- Settings changed in the menu are written into bmx2.ini on close, on Exit
+  game and when the window is closed with the menu open (menu_save_pending ->
+  config_save): the whole file is read, each `key = value` line of a changed
+  key is replaced in place (line endings, comments, long lines kept), missing
+  keys are appended, via bmx2.ini.new; on an error the file stays. Only if a
+  bmx2.ini was read at start-up.
+- Widescreen: cameras take the aspect when they are made (hook 11dfd0), so
+  the picture shape and the frustum hook use ws_active(), the value latched
+  there; the menu shows "next race" until a camera is made again (checked
+  mid-ride: the picture keeps the cameras' 16:9).
+- Not in --turbo runs (g_turbo_cli; frame_limit = 0 keeps the menu) or
+  without a window. Esc auto-repeat is ignored; the pause is not timed as a
+  frame (g_pace_restart) nor counted as a present gap. Pads: only player
+  slots pad_vsync found are read (the empty-slot probe stays in pad_vsync);
+  while paused an empty slot is tried once a second by the clock. Audio is silent while paused (spu2
   underruns are not counted then); pace() restarts its schedule after it.
 - MENU_TEST=<frame>:<keys> (up down left right ok back) opens it in a
   scripted run and feeds one key every 4 passes; GS_SHOT_WINDOW=1 shoots the

@@ -118,9 +118,22 @@ static void rumble_stop_all(void) {
    for the motors while the game is paused */
 int pad_menu_buttons(void) {
     extern volatile int g_menu_open;
-    if (!g_cfg.gamepad && !g_menu_open) return 0;
-    xi_state x; int b = 0;
-    for (DWORD i = 0; i < 2; i++) if (xi_read(i, &x)) b |= x.g.buttons;
+    if (!xi_tried) xi_load();
+    if (!xi_get) return 0;
+    int slot[2] = { -1, -1 };
+    if (g_cfg.gamepad) { slot[0] = player_slot(0); slot[1] = player_slot(1); }
+    else if (g_menu_open) slot[0] = 0;
+    /* only slots pad_vsync found a pad in (it keeps the miss count); while the
+       game is paused g_frame stands still, so an empty slot is tried once a
+       second by the clock instead */
+    static DWORD retry[4]; DWORD t = GetTickCount(); int b = 0;
+    for (int k = 0; k < 2; k++) {
+        int s = slot[k];
+        if (s < 0 || (k && s == slot[0])) continue;
+        if (!xi_present[s] && !(g_menu_open && (int)(t - retry[s]) >= 0)) continue;
+        xi_state x;
+        if (xi_get((DWORD)s, &x) == 0) b |= x.g.buttons; else retry[s] = t + 1000;
+    }
     return b;
 }
 void pad_rumble_stop(void) { rumble_stop_all(); }

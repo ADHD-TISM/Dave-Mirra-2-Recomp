@@ -25,9 +25,11 @@ int gsgl_scale(void);
 void gs_present_again(void);
 int pad_menu_buttons(void);
 void pad_rumble_stop(void);
-void config_save(const char *const *keys, int n);
+void config_save(const char *const *keys, const char *const *vals, int n);
+int ws_active(void);
+extern int g_pace_restart;
 extern int g_spu_volume;
-extern int g_turbo;
+int g_turbo_cli;                   /* --turbo (scripted runs): no menu; frame_limit = 0 keeps it */
 
 volatile int g_menu_open;          /* spu2.c: no underrun counting while paused */
 volatile int g_menu_visible;       /* gs_gl.c: draw the overlay */
@@ -52,7 +54,8 @@ static int sel = IT_RESUME, exit_armed, dirty[IT_N];
 static void value_text(int i, char *out, size_t n) {
     out[0] = 0;
     switch (i) {
-    case IT_WIDE: snprintf(out, n, "%s", g_cfg.widescreen ? "On (16:9)" : "Off (4:3)"); break;
+    case IT_WIDE: snprintf(out, n, "%s%s", g_cfg.widescreen ? "On (16:9)" : "Off (4:3)",
+                           g_cfg.widescreen != ws_active() ? ", next race" : ""); break;
     case IT_ASPECT: snprintf(out, n, "%s", g_cfg.stretch ? "Stretch to window" : "Keep shape"); break;
     case IT_FILTER: snprintf(out, n, "%s", g_cfg.smooth ? "Smooth" : "Sharp pixels"); break;
     case IT_FULL: snprintf(out, n, "%s", gsgl_is_fullscreen() ? "On" : "Off"); break;
@@ -113,11 +116,13 @@ void menu_size(int *w, int *h) { *w = MW; *h = menu_h(); }
 /* rows / values copied under the lock: the renderer may run on the GS stage */
 static struct { int sel; char val[IT_N][48]; } snap;
 static void snapshot(void) {
+    char val[IT_N][48];
+    for (int i = 0; i < IT_N; i++) value_text(i, val[i], sizeof val[i]);
     AcquireSRWLockExclusive(&lock);
-    snap.sel = sel;
-    for (int i = 0; i < IT_N; i++) value_text(i, snap.val[i], sizeof snap.val[i]);
+    int same = snap.sel == sel && !memcmp(snap.val, val, sizeof val);
+    snap.sel = sel; memcpy(snap.val, val, sizeof val);
     ReleaseSRWLockExclusive(&lock);
-    touched();
+    if (!same) touched();   /* the presenting thread draws and uploads it again */
 }
 
 /* pix: MW x menu_h() pixels, top row first, RGBA in memory order (alpha set) */
@@ -188,14 +193,15 @@ enum { A_NONE, A_UP, A_DOWN, A_LEFT, A_RIGHT, A_OK, A_BACK };
 static int keyq[16], nkeys;
 
 /* from the window procedure: 1 = the menu took the key */
-int menu_on_key(WPARAM vk) {
+int menu_on_key(WPARAM vk, LPARAM l) {
+    int repeat = (l >> 30) & 1;           /* auto-repeat of a held key */
     if (!g_menu_open) {
-        if (vk == VK_ESCAPE) { open_request = 1; return 1; }
+        if (vk == VK_ESCAPE) { if (!repeat) open_request = 1; return 1; }
         return 0;
     }
+    if (repeat && (vk == VK_ESCAPE || vk == VK_RETURN || vk == VK_SPACE || vk == VK_BACK)) return 1;   /* arrows repeat */
     int a = vk == VK_UP ? A_UP : vk == VK_DOWN ? A_DOWN : vk == VK_LEFT ? A_LEFT : vk == VK_RIGHT ? A_RIGHT :
             vk == VK_RETURN || vk == VK_SPACE ? A_OK : vk == VK_ESCAPE || vk == VK_BACK ? A_BACK : A_NONE;
-    if (vk == VK_F11) return 0;           /* fullscreen toggle still works */
     if (a != A_NONE && nkeys < 16) keyq[nkeys++] = a;
     return 1;
 }
@@ -241,15 +247,30 @@ static void move(int d) {
     do { sel = (sel + d + IT_N) % IT_N; } while (is_header(sel));
 }
 
+/* write the settings changed since the menu opened into bmx2.ini (on close,
+   on Exit game and when the window is closed with the menu open) */
+void menu_save_pending(void) {
+    const char *keys[IT_N], *vals[IT_N]; char buf[IT_N][32]; int nk = 0;
+    for (int i = 0; i < IT_N; i++) {
+        if (!dirty[i] || !ini_key[i]) continue;
+        ini_value(i, buf[nk], sizeof buf[nk]);
+        keys[nk] = ini_key[i]; vals[nk] = buf[nk]; nk++;
+        dirty[i] = 0;
+    }
+    if (nk) config_save(keys, vals, nk);
+}
+
 static int ntest;              /* MENU_TEST, below */
 static int test_next(void);
 
 /* ---- the pause loop ---------------------------------------------------------------- */
 static void run_menu(void) {
-    g_menu_open = 1; g_menu_visible = 1;
+    g_menu_open = 1;
     pad_rumble_stop();
     sel = IT_RESUME; exit_armed = 0; nkeys = 0;
     memset(dirty, 0, sizeof dirty);
+    snapshot();                             /* the panel is ready before it shows */
+    g_menu_visible = 1;
     pad_prev = pad_menu_buttons();          /* the buttons that opened it are not presses */
     LOG("menu: opened at frame %llu\n", (unsigned long long)g_frame);
     int done = 0;
@@ -269,7 +290,7 @@ static void run_menu(void) {
             case A_OK:
                 if (sel == IT_RESUME) done = 1;
                 else if (sel == IT_EXIT) {
-                    if (exit_armed) { LOG("menu: exit\n"); pad_rumble_stop(); exit(0); }
+                    if (exit_armed) { LOG("menu: exit\n"); menu_save_pending(); pad_rumble_stop(); exit(0); }
                     exit_armed = 1;
                 } else change(sel, 1);
                 break;
@@ -280,21 +301,15 @@ static void run_menu(void) {
         Sleep(16);
     }
     g_menu_visible = 0;
-    const char *keys[IT_N]; int nk = 0;
-    for (int i = 0; i < IT_N; i++) if (dirty[i] && ini_key[i]) keys[nk++] = ini_key[i];
-    if (nk) config_save(keys, nk);
+    int nk = 0; for (int i = 0; i < IT_N; i++) nk += dirty[i] && ini_key[i];
+    menu_save_pending();
     /* keys or buttons still held would reach the game: wait for them to go (1.5 s at most) */
     DWORD t0 = GetTickCount();
     while (held_any() && GetTickCount() - t0 < 1500) { gsgl_pump(); gs_present_again(); Sleep(16); }
     nkeys = 0;
+    g_pace_restart = 1;                     /* the pause is not a slow frame */
     g_menu_open = 0;
     LOG("menu: closed%s\n", nk ? ", settings saved" : "");
-}
-
-/* the ini text of a changed setting (config.c asks while writing bmx2.ini) */
-void menu_ini_value(const char *key, char *out, size_t n) {
-    out[0] = 0;
-    for (int i = 0; i < IT_N; i++) if (ini_key[i] && !_stricmp(ini_key[i], key)) { ini_value(i, out, n); return; }
 }
 
 /* MENU_TEST=<frame>:<key>,<key>,... (debug): open the menu at that frame and
@@ -326,7 +341,7 @@ static int test_next(void) {
 void menu_vsync(void) {
     if (ntest < 0) test_load();
     if (ntest > 0 && g_frame == test_at) open_request = 1;
-    if (g_turbo || !gsgl_window_shown()) return;
+    if (g_turbo_cli || !gsgl_window_shown()) return;
     int b = pad_menu_buttons();
     static int combo_prev;
     int combo = (b & (XB_BACK | XB_START)) == (XB_BACK | XB_START);

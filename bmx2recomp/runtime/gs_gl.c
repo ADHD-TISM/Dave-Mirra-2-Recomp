@@ -137,15 +137,15 @@ static void set_fullscreen(HWND h, int on) {
     is_full = on;
 }
 
-int menu_on_key(WPARAM vk);
+int menu_on_key(WPARAM vk, LPARAM l); void menu_save_pending(void);
 static LRESULT CALLBACK wndproc(HWND h, UINT m, WPARAM w, LPARAM l) {
     switch (m) {
     case WM_KEYDOWN:
         if (w == VK_F11) { set_fullscreen(h, !is_full); return 0; }
-        if (menu_on_key(w)) return 0;   /* Esc opens the in-game menu; while open it takes the keys */
+        if (menu_on_key(w, l)) return 0;   /* Esc opens the in-game menu; while open it takes the keys */
         break;
     case WM_SYSKEYDOWN: if (w == VK_RETURN && (l & (1 << 29))) { set_fullscreen(h, !is_full); return 0; } break;
-    case WM_CLOSE: LOG("gs: window closed\n"); exit(0);
+    case WM_CLOSE: LOG("gs: window closed\n"); menu_save_pending(); exit(0);   /* settings changed in an open menu are kept */
     case WM_PAINT: { PAINTSTRUCT ps; BeginPaint(h, &ps); EndPaint(h, &ps); return 0; }
     case WM_ERASEBKGND: return 1;
     }
@@ -1245,6 +1245,7 @@ static void menu_overlay(int cw, int ch) {
     if (menu_version() != mver) {
         mver = menu_version();
         u32 *pix = malloc((size_t)mw * mh * 4);
+        if (!pix) return;
         menu_render(pix);
         glBindTexture(GL_TEXTURE_2D, mt);
         glPixelStorei(GL_UNPACK_ALIGNMENT, 4);
@@ -1259,7 +1260,7 @@ static void menu_overlay(int cw, int ch) {
     glViewport(0, 0, cw, ch);
     glEnable(GL_BLEND);   /* batches leave their own equation (subtract, dual-source): set all of it */
     glBlendEquationSeparate(GL_FUNC_ADD, GL_FUNC_ADD);
-    glBlendFuncSeparate(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA, GL_ONE, GL_ZERO);
+    glBlendFuncSeparate(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA, GL_ZERO, GL_ONE);   /* window alpha stays opaque */
     glUseProgram(cprog);
     glActiveTexture(GL_TEXTURE0); glBindTexture(GL_TEXTURE_2D, mt);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
@@ -1322,7 +1323,8 @@ static void present_rect_(u32 fbp, u32 fbw, u32 psm, u32 dbx, u32 dby, u32 w, u3
     glColorMask(1, 1, 1, 1);
     glClearColor(0, 0, 0, 1); glClear(GL_COLOR_BUFFER_BIT);
     if (src) {
-        int an = g_cfg.widescreen ? 16 : 4, ad = g_cfg.widescreen ? 9 : 3;   /* 4:3, or 16:9 with widescreen */
+        extern int ws_active(void);
+        int an = ws_active() ? 16 : 4, ad = ws_active() ? 9 : 3;   /* 4:3, or 16:9 with widescreen (as the cameras were made) */
         int vw = cw, vh = cw * ad / an;
         if (vh > ch) { vh = ch; vw = ch * an / ad; }
         if (g_cfg.stretch) { vw = cw; vh = ch; }
@@ -1367,7 +1369,9 @@ static void present_rect_(u32 fbp, u32 fbw, u32 psm, u32 dbx, u32 dby, u32 w, u3
     swap_wait_ms = (double)(t1.QuadPart - t0.QuadPart) * 1000.0 / fq.QuadPart;
     {   /* time between presents as the screen gets them: a gap over 20 ms is a frame shown twice */
         static LARGE_INTEGER last; static int have;
-        if (have && g_frame > 60) {
+        extern volatile int g_menu_open;
+        if (g_menu_open) have = 0;              /* the in-game menu's presents are not frames */
+        else if (have && g_frame > 60) {
             double gap = (double)(t1.QuadPart - last.QuadPart) * 1000.0 / fq.QuadPart;
             n_presents++;
             if (gap > 20) {

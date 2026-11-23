@@ -130,9 +130,16 @@ static float game_tan(int half) {
     return ee.fpr[0].f;
 }
 
+/* the widescreen setting the cameras were made with: the in-game menu changes
+   g_cfg.widescreen, the picture shape and the frustum follow once a camera is
+   made again (fn 11dfd0), so they always match the projection */
+volatile int g_ws_active = -1;
+int ws_active(void) { return g_ws_active < 0 ? g_cfg.widescreen : g_ws_active; }
+
 int ee_hook(u32 a) {
     switch (a) {
     case 0x0011dfd0:   /* camera aspect setter (cam+68 = f12 x, cam+72 = f13 y), from fn 100ad0 values */
+        g_ws_active = g_cfg.widescreen;
         if (g_cfg.widescreen) ee.fpr[12].f *= 0.75f;   /* Hor+: same height, 4/3 wider view */
         break;
     case 0x00101068: { /* view frustum builder (a0 = cam), called by fn 1017e0 each frame */
@@ -143,7 +150,7 @@ int ee_hook(u32 a) {
          * wider and h scaled to keep tan y, then put back fov, h and the focal length cam+1096
          * (read by the projection fn 101570 and copied to the draw state). */
         static int inner;
-        if (!g_cfg.widescreen || inner) return 0;
+        if (!ws_active() || inner) return 0;
         u32 cam = GW(4) & 0x1ffffff;
         if (!ee_ptr(cam) || !ee_ptr(cam + 1100)) return 0;
         u16 fov; memcpy(&fov, ee_ptr(cam + 56), 2);
@@ -195,7 +202,7 @@ int main(int argc, char **argv) {
         else if (!strcmp(argv[i], "--log-ipu")) { extern int g_log_ipu; g_log_ipu = 1; }
         else if (!strcmp(argv[i], "--no-movies")) { extern int g_no_movies; g_no_movies = 1; }
         else if (!strcmp(argv[i], "--log-iop")) { extern int g_log_iop; g_log_iop = 1; }
-        else if (!strcmp(argv[i], "--turbo")) g_turbo = 1;
+        else if (!strcmp(argv[i], "--turbo")) { g_turbo = 1; extern int g_turbo_cli; g_turbo_cli = 1; }
         else if (!strcmp(argv[i], "--no-audio")) g_no_audio = 1;
         else if (!strcmp(argv[i], "--log-mc")) { extern int g_log_mc; g_log_mc = 1; }
         else if (!strcmp(argv[i], "--log-frames")) { extern int g_log_frames; g_log_frames = 1; }

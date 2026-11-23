@@ -178,8 +178,10 @@ static void frame_stat(double ms) {
     if (g_log_frames && ms > 17) LOG("frames: frame %llu took %.1f ms\n", (unsigned long long)g_frame, ms);
 }
 
+int g_pace_restart;   /* menu.c: the game was paused; the next frame is not timed */
 static void pace(void) {
     static LARGE_INTEGER done; static int have;
+    if (g_pace_restart) { g_pace_restart = 0; have = 0; }
     extern int gsgl_vsync_paced(void); extern double gsgl_swap_wait_ms(void);
     LARGE_INTEGER now; QueryPerformanceCounter(&now);
     int vs = gsgl_vsync_paced();
