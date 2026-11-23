@@ -107,6 +107,14 @@ typedef ptrdiff_t GLsizeiptr;
 GLF(X)
 #undef X
 
+/* A laptop with two graphics chips runs a program on the integrated one unless
+ * the program asks for the other. These exported variables are the drivers'
+ * documented request for the dedicated chip (NVIDIA Optimus, AMD Switchable
+ * Graphics); they change no system setting and do nothing with one chip. The
+ * chip the context got is in the log line "gs: OpenGL ... (<renderer>)". */
+__declspec(dllexport) unsigned long NvOptimusEnablement = 1;
+__declspec(dllexport) int AmdPowerXpressRequestHighPerformance = 1;
+
 /* ---- window --------------------------------------------------------------- */
 static HWND wnd;
 static HDC dc;
