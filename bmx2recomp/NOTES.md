@@ -16,6 +16,15 @@ xref search). Names come from `tools/names.txt`; add confirmed ones there.
 `tools/dis.py` needs capstone (not installed) and REA cannot analyse MIPS ELFs
 on Windows, so use eedis.py. Workflow summary: skill `ps2-static-recomp`.
 
+## State (2026-11-22): v0.1.6 published, playable
+Every level loads and rides, sound plays, memory card saves work, player 2,
+vibration, widescreen, scale 1-4x, launcher with Download / Update / Build.
+v0.1.6 (pre-release, tag at 82b4e19) adds the in-game menu (see "In-game
+menu"); v0.1.4 and v0.1.5 made the graphics pipeline fast enough that the
+user sees no stutter with other programs running (see "Stutter under CPU
+load"). Next: playtest (see "Next step"). The State sections below are older
+snapshots, kept for history.
+
 ## State (2026-11-19, sixth session): levels run at full speed
 Woodward Camp averages 68 fps in --turbo (was 6-35) and holds 59.9 fps in
 real time in the window. VU1 microcode is statically recompiled to C
@@ -821,7 +830,7 @@ programs ran (another game, many Dave Mirra 1 runs, YouTube). Findings:
   0.855 -> 0.73 ms per frame. draw_prim keeps the decoded gs_draw_state per
   class until st_gen moves (every register write that is not vertex data:
   RGBAQ ST UV XYZ* FOG; and every CLUT change), and tells gsgl_draw when the
-  state is the one it passed last time, so the 240-byte memcmp is skipped.
+  state is the one it passed last time, so the 292-byte memcmp is skipped.
   clut_load skips the 256-entry compare when the cached CSM1 source was the
   last thing applied at the same CSA (clut_ver). fu_count (GS_FEATURES stats)
   only runs when they are reported. The texture cache looks up a hint by key
@@ -833,9 +842,12 @@ programs ran (another game, many Dave Mirra 1 runs, YouTube). Findings:
 ## Next step (recommended, 2026-11-22)
 1. Playtest further; add missing code from any message box. Every level now
    loads and rides in scripted crawls (see "Levels and cheats").
-2. More graphics-thread speed if stutter under load still matters: the VU
-   stage is still the limit (VU1 programs ~57%, VIF ~20% of it); the GS
-   stage's vertex_kick, build_state, clut_load come next once it is faster.
+2. Speed is good enough (user stopped optimizing at v0.1.5: each thread
+   needs under 8% of a 60 fps frame; user: smooth, no stutter). If stutter
+   under load comes back, buffering (a third frame in flight, a deeper audio
+   buffer) helps more than compute. Otherwise the VU stage is the limit
+   (VU1 programs ~57%, VIF ~20% of it), then the GS stage's to_vertex,
+   texture_from_memory and clut_load.
 
 ## In-game menu (2026-11-22)
 Esc, or Back+Start on a gamepad, pauses the game and shows a menu over the
@@ -849,8 +861,8 @@ player 2 pad); Exit game (press twice).
   presenting thread uploads when menu_version changes and draws with blending
   in present_rect_ (gs_gl.c menu_overlay), before the window shot.
 - Keys reach it through the window procedure (menu_on_key; Esc opens it);
-  pads are polled (pad_menu_buttons: slots 0 and 1, also with gamepad = 0
-  while the menu is open). The motors stop while paused. On close it waits up
+  pads are polled (pad_menu_buttons: the player slots, slot 0 also with
+  gamepad = 0 while the menu is open). The motors stop while paused. On close it waits up
   to 1.5 s for menu keys/buttons to be released so the game does not see them.
 - Applied at once: g_cfg fields (widescreen, stretch, smooth, gamepad,
   rumble, pad2 are read live), fullscreen through set_fullscreen, vsync
@@ -867,16 +879,23 @@ player 2 pad); Exit game (press twice).
   stays. Only if a bmx2.ini was read at start-up.
 - Widescreen: a camera takes the aspect when it is made (hook 11dfd0, a0 =
   cam; callers fn 100ad0, 11dc98, 16cd40). The hook records per camera the
-  setting it was made with (cam_ws, 32 cameras); the frustum hook uses its
-  camera's value and sets g_ws_active, which the picture shape follows
-  (ws_active()). The menu shows "next race" until the drawn camera has the new
-  value (checked mid-ride: the picture keeps the camera's 16:9).
+  setting it was made with (cam_ws: 32 cameras, the least recently used is
+  replaced, so cameras drawn every frame stay). The frustum hook (fn 101068,
+  every frame) uses its camera's value and sets g_ws_active, which the
+  picture shape follows (ws_active()); a camera the table does not know uses
+  the current setting for its frustum and leaves the picture shape alone. The
+  menu shows "next race" until the drawn camera has the new value (checked
+  mid-ride: the picture keeps the camera's 16:9).
 - Not in --turbo runs (g_turbo_cli; frame_limit = 0 keeps the menu) or
   without a window. Esc auto-repeat is ignored; the pause is not timed as a
-  frame (g_pace_restart) nor counted as a present gap. Pads: only player
-  slots pad_vsync found are read (the empty-slot probe stays in pad_vsync);
-  while paused an empty slot is tried once a second by the clock. Audio is silent while paused (spu2
-  underruns are not counted then); pace() restarts its schedule after it.
+  frame (g_pace_restart) nor counted as a present gap. Pads: outside the
+  menu only player slots pad_vsync found are read (the empty-slot probe stays
+  in pad_vsync); while paused every player slot is read, and a slot whose
+  read failed waits a second (waiting flag, so the 49.7-day tick wrap cannot
+  block it). Known nit: the waiting flag is cleared only by a good read, so it
+  can outlive a menu session; that matters only with weeks of uptime between
+  two openings. Audio is silent while paused (spu2 underruns are not counted
+  then); pace() restarts its schedule after it.
 - MENU_TEST=<frame>:<keys> (up down left right ok back) opens it in a
   scripted run and feeds one key every 4 passes; GS_SHOT_WINDOW=1 shoots the
   window with the overlay. Tested: 2x->3x, 4x->2x, widescreen, volume,
