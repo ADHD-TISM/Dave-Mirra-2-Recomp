@@ -92,6 +92,11 @@ The memory card is the folder `game\memcard\mc0`. Back it up to keep your saves.
 - **A message box says the game called code that was not recompiled:** please
   open an issue with a screenshot of the message and what you were doing.
 - **Stutter:** make sure vsync is on in Settings, and try a lower resolution.
+  On a laptop with two graphics chips (for example NVIDIA and Intel) the game
+  runs on the dedicated chip and paces frames with its own timer, whatever the
+  vsync setting; `game\bmx2.log` then says "driven by another graphics chip".
+  If the log names the integrated chip instead, set Windows Settings >
+  Display > Graphics > `bmx2.exe` to High performance.
 
 ## Building from source (developers)
 

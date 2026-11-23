@@ -16,14 +16,43 @@ xref search). Names come from `tools/names.txt`; add confirmed ones there.
 `tools/dis.py` needs capstone (not installed) and REA cannot analyse MIPS ELFs
 on Windows, so use eedis.py. Workflow summary: skill `ps2-static-recomp`.
 
-## State (2026-11-22): v0.1.6 published, playable
+## State (2026-11-23): v0.1.7 published, playable
 Every level loads and rides, sound plays, memory card saves work, player 2,
 vibration, widescreen, scale 1-4x, launcher with Download / Update / Build.
-v0.1.6 (pre-release, tag at 82b4e19) adds the in-game menu (see "In-game
-menu"); v0.1.4 and v0.1.5 made the graphics pipeline fast enough that the
-user sees no stutter with other programs running (see "Stutter under CPU
-load"). Next: playtest (see "Next step"). The State sections below are older
-snapshots, kept for history.
+v0.1.7 (full release, Latest, tag at 89a8dcb) makes two-chip laptops run on
+the dedicated chip and pace frames evenly (see "Two-chip laptops"); v0.1.6
+added the in-game menu (see "In-game menu"); v0.1.4 and v0.1.5 made the
+graphics pipeline fast enough that the user sees no stutter with other
+programs running (see "Stutter under CPU load"). Next: the user watches a
+ride on the laptop (smoothness, tearing in fullscreen), then playtest (see
+"Next step"). The State sections below are older snapshots, kept for history.
+
+## Two-chip laptops (2026-11-23)
+Test laptop (reached over SSH): i5-9300H 4 cores / 8 threads, GTX 1050 Ti +
+UHD 630, 16 GB, panel 60.003 Hz, compositor 60.04 Hz. Runs go to the
+logged-in desktop through a one-off `schtasks /create /it` task (over SSH
+alone there is no display), deleted after.
+- Before v0.1.7 the game ran on the Intel chip: no dedicated-chip request.
+  gs_gl.c now exports NvOptimusEnablement and
+  AmdPowerXpressRequestHighPerformance; the log line "gs: OpenGL ... (<chip>)"
+  names the chip in use.
+- On the NVIDIA chip with vsync, the scripted ride (ride.txt route, 7600
+  frames, real time) had ~52 presents over 20 ms apart after frame 6600
+  (desktop: 0). Not the CPU (12% busy), not the GPU (scale 2 cut GPU frames
+  over 12 ms from 455 to 10, gaps stayed), not the queue (timer at 60.6 Hz
+  kept 2 frames queued, gaps stayed). Vsync off: 3. The picture is copied
+  from the NVIDIA chip to the Intel chip, and vsync on that path is uneven.
+- choose_vsync now compares the GL_RENDERER vendor with the DeviceString
+  vendor of the adapter owning the window's monitor (EnumDisplayDevicesA);
+  if they differ, swap interval 0 and timer pacing (59.94 Hz), logged as
+  "vsync off, timer pacing (display 60 Hz, driven by another graphics chip)".
+  Laptop after: 3 gaps windowed and fullscreen; desktop (RX 7900 XTX on the
+  Dell) unchanged, vsync, 0 gaps.
+- Not covered: two chips from one vendor (AMD + AMD, Intel Arc + Iris Xe)
+  keep vsync; there is no setting to force vsync back on (gatekeeper
+  suggestion); tearing in fullscreen with interval 0 is not checked by eye.
+- One long frame at the level load (frame ~5209: 88 ms laptop, 366 ms
+  desktop after a rebuild), not looked into.
 
 ## State (2026-11-19, sixth session): levels run at full speed
 Woodward Camp averages 68 fps in --turbo (was 6-35) and holds 59.9 fps in
@@ -251,7 +280,9 @@ frames 125 -> 40. No audio underruns in the level either way.
 - Vsync (gs_gl.c choose_vsync): at a 60/120/180/240 Hz monitor the swap
   interval is refresh/60 and the timer paces 60.00 Hz instead of 59.94 (the
   swap alone does not hold the rate: in a window the compositor followed the
-  120 Hz primary). Off: `vsync = 0` in bmx2.ini or NO_VSYNC=1. Audio: the
+  120 Hz primary). Off: `vsync = 0` in bmx2.ini or NO_VSYNC=1, and always
+  when the window's monitor hangs on another graphics chip than the renderer
+  (see "Two-chip laptops"). Audio: the
   waveOut thread skips 1 frame in 256 while more than ~64 ms is queued
   (exit line "frames dropped for drift").
 - Graphics thread (runtime/gsthread.c): VIF1, VU1, the GS front end and all
