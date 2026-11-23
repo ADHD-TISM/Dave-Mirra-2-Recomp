@@ -137,7 +137,7 @@ static void set_fullscreen(HWND h, int on) {
     is_full = on;
 }
 
-int menu_on_key(WPARAM vk, LPARAM l); void menu_save_pending(void);
+int menu_on_key(WPARAM vk, LPARAM l); int menu_save_pending(void);
 static LRESULT CALLBACK wndproc(HWND h, UINT m, WPARAM w, LPARAM l) {
     switch (m) {
     case WM_KEYDOWN:
@@ -1370,8 +1370,8 @@ static void present_rect_(u32 fbp, u32 fbw, u32 psm, u32 dbx, u32 dby, u32 w, u3
     {   /* time between presents as the screen gets them: a gap over 20 ms is a frame shown twice */
         static LARGE_INTEGER last; static int have;
         extern volatile int g_menu_open;
-        if (g_menu_open) have = 0;              /* the in-game menu's presents are not frames */
-        else if (have && g_frame > 60) {
+        if (g_menu_open) have = -1;             /* the in-game menu's presents are not frames, nor the gap after it */
+        else if (have > 0 && g_frame > 60) {
             double gap = (double)(t1.QuadPart - last.QuadPart) * 1000.0 / fq.QuadPart;
             n_presents++;
             if (gap > 20) {
@@ -1381,7 +1381,8 @@ static void present_rect_(u32 fbp, u32 fbw, u32 psm, u32 dbx, u32 dby, u32 w, u3
             }
             if (gap > present_gap_max && g_frame > 6600) present_gap_max = gap;
         }
-        have = 1; last = t1;
+        if (!g_menu_open) have = 1;
+        last = t1;
     }
 }
 

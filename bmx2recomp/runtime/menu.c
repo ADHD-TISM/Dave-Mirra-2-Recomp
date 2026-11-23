@@ -25,7 +25,7 @@ int gsgl_scale(void);
 void gs_present_again(void);
 int pad_menu_buttons(void);
 void pad_rumble_stop(void);
-void config_save(const char *const *keys, const char *const *vals, int n);
+int config_save(const char *const *keys, const char *const *vals, int n);
 int ws_active(void);
 extern int g_pace_restart;
 extern int g_spu_volume;
@@ -116,7 +116,7 @@ void menu_size(int *w, int *h) { *w = MW; *h = menu_h(); }
 /* rows / values copied under the lock: the renderer may run on the GS stage */
 static struct { int sel; char val[IT_N][48]; } snap;
 static void snapshot(void) {
-    char val[IT_N][48];
+    char val[IT_N][48] = { { 0 } };          /* zeroed past each string: compared whole below */
     for (int i = 0; i < IT_N; i++) value_text(i, val[i], sizeof val[i]);
     AcquireSRWLockExclusive(&lock);
     int same = snap.sel == sel && !memcmp(snap.val, val, sizeof val);
@@ -249,7 +249,7 @@ static void move(int d) {
 
 /* write the settings changed since the menu opened into bmx2.ini (on close,
    on Exit game and when the window is closed with the menu open) */
-void menu_save_pending(void) {
+int menu_save_pending(void) {
     const char *keys[IT_N], *vals[IT_N]; char buf[IT_N][32]; int nk = 0;
     for (int i = 0; i < IT_N; i++) {
         if (!dirty[i] || !ini_key[i]) continue;
@@ -257,7 +257,7 @@ void menu_save_pending(void) {
         keys[nk] = ini_key[i]; vals[nk] = buf[nk]; nk++;
         dirty[i] = 0;
     }
-    if (nk) config_save(keys, vals, nk);
+    return nk ? config_save(keys, vals, nk) : 0;
 }
 
 static int ntest;              /* MENU_TEST, below */
@@ -301,15 +301,14 @@ static void run_menu(void) {
         Sleep(16);
     }
     g_menu_visible = 0;
-    int nk = 0; for (int i = 0; i < IT_N; i++) nk += dirty[i] && ini_key[i];
-    menu_save_pending();
+    int saved = menu_save_pending();
     /* keys or buttons still held would reach the game: wait for them to go (1.5 s at most) */
     DWORD t0 = GetTickCount();
     while (held_any() && GetTickCount() - t0 < 1500) { gsgl_pump(); gs_present_again(); Sleep(16); }
     nkeys = 0;
     g_pace_restart = 1;                     /* the pause is not a slow frame */
     g_menu_open = 0;
-    LOG("menu: closed%s\n", nk ? ", settings saved" : "");
+    LOG("menu: closed%s\n", saved ? ", settings saved" : "");
 }
 
 /* MENU_TEST=<frame>:<key>,<key>,... (debug): open the menu at that frame and

@@ -130,16 +130,28 @@ static float game_tan(int half) {
     return ee.fpr[0].f;
 }
 
-/* the widescreen setting the cameras were made with: the in-game menu changes
-   g_cfg.widescreen, the picture shape and the frustum follow once a camera is
-   made again (fn 11dfd0), so they always match the projection */
+/* The widescreen setting each camera was made with (fn 11dfd0, a0 = cam): the
+   in-game menu changes g_cfg.widescreen, but a camera keeps the aspect it got.
+   The frustum hook uses its camera's value, and the picture shape follows the
+   camera the game built a frustum for last (g_ws_active), so they always match
+   the projection. Before any camera: the setting. */
+static struct { u32 cam; int ws; } cam_ws[32];
+static int cam_ws_of(u32 cam) {
+    for (int i = 0; i < 32; i++) if (cam_ws[i].cam == cam) return cam_ws[i].ws;
+    return g_cfg.widescreen;
+}
+static void cam_ws_set(u32 cam, int ws) {
+    static int next;
+    for (int i = 0; i < 32; i++) if (cam_ws[i].cam == cam) { cam_ws[i].ws = ws; return; }
+    cam_ws[next].cam = cam; cam_ws[next].ws = ws; next = (next + 1) & 31;
+}
 volatile int g_ws_active = -1;
 int ws_active(void) { return g_ws_active < 0 ? g_cfg.widescreen : g_ws_active; }
 
 int ee_hook(u32 a) {
     switch (a) {
     case 0x0011dfd0:   /* camera aspect setter (cam+68 = f12 x, cam+72 = f13 y), from fn 100ad0 values */
-        g_ws_active = g_cfg.widescreen;
+        cam_ws_set(GW(4) & 0x1ffffff, g_cfg.widescreen);
         if (g_cfg.widescreen) ee.fpr[12].f *= 0.75f;   /* Hor+: same height, 4/3 wider view */
         break;
     case 0x00101068: { /* view frustum builder (a0 = cam), called by fn 1017e0 each frame */
@@ -150,8 +162,10 @@ int ee_hook(u32 a) {
          * wider and h scaled to keep tan y, then put back fov, h and the focal length cam+1096
          * (read by the projection fn 101570 and copied to the draw state). */
         static int inner;
-        if (!ws_active() || inner) return 0;
+        if (inner) return 0;
         u32 cam = GW(4) & 0x1ffffff;
+        g_ws_active = cam_ws_of(cam);
+        if (!g_ws_active) return 0;
         if (!ee_ptr(cam) || !ee_ptr(cam + 1100)) return 0;
         u16 fov; memcpy(&fov, ee_ptr(cam + 56), 2);
         float h = camf(cam + 28), w = camf(cam + 24);

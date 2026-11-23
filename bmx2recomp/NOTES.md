@@ -862,12 +862,15 @@ player 2 pad); Exit game (press twice).
   game and when the window is closed with the menu open (menu_save_pending ->
   config_save): the whole file is read, each `key = value` line of a changed
   key is replaced in place (line endings, comments, long lines kept), missing
-  keys are appended, via bmx2.ini.new; on an error the file stays. Only if a
-  bmx2.ini was read at start-up.
-- Widescreen: cameras take the aspect when they are made (hook 11dfd0), so
-  the picture shape and the frustum hook use ws_active(), the value latched
-  there; the menu shows "next race" until a camera is made again (checked
-  mid-ride: the picture keeps the cameras' 16:9).
+  keys are appended, via bmx2.ini.new (flushed to disk, then MoveFileEx
+  write-through); on an error, or a file with NUL bytes (UTF-16), the file
+  stays. Only if a bmx2.ini was read at start-up.
+- Widescreen: a camera takes the aspect when it is made (hook 11dfd0, a0 =
+  cam; callers fn 100ad0, 11dc98, 16cd40). The hook records per camera the
+  setting it was made with (cam_ws, 32 cameras); the frustum hook uses its
+  camera's value and sets g_ws_active, which the picture shape follows
+  (ws_active()). The menu shows "next race" until the drawn camera has the new
+  value (checked mid-ride: the picture keeps the camera's 16:9).
 - Not in --turbo runs (g_turbo_cli; frame_limit = 0 keeps the menu) or
   without a window. Esc auto-repeat is ignored; the pause is not timed as a
   frame (g_pace_restart) nor counted as a present gap. Pads: only player

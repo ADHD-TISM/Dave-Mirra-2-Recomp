@@ -5,6 +5,7 @@ int g_gs_thread_cfg = 1;   /* gsthread.c: 0 = graphics on the EE thread */
 #include <ctype.h>
 #include <stdlib.h>
 #include <windows.h>
+#include <io.h>
 
 bmx2_cfg g_cfg = {
     .scale = 0, .window_w = 0, .window_h = 0, .fullscreen = 0, .stretch = 0, .smooth = 1,
@@ -121,20 +122,23 @@ void config_load(const char *path) {
  * the file lacks is added at the end. The new text goes to bmx2.ini.new, which
  * then replaces the file; on any error the file is left as it was. Only if a
  * bmx2.ini was read at start-up: development runs without one keep it so. */
-void config_save(const char *const *keys, const char *const *vals, int nkeys) {
-    if (nkeys <= 0) return;
-    if (!loaded_path[0]) { LOG("config: no bmx2.ini was read, menu changes are not saved\n"); return; }
+int config_save(const char *const *keys, const char *const *vals, int nkeys) {
+    if (nkeys <= 0) return 0;
+    if (!loaded_path[0]) { LOG("config: no bmx2.ini was read, menu changes are not saved\n"); return 0; }
     FILE *f = fopen(loaded_path, "rb");
-    if (!f) { LOG("config: cannot read %s, menu changes are not saved\n", loaded_path); return; }
+    if (!f) { LOG("config: cannot read %s, menu changes are not saved\n", loaded_path); return 0; }
     fseek(f, 0, SEEK_END); long size = ftell(f); fseek(f, 0, SEEK_SET);
     char *text = size >= 0 && size < (16 << 20) ? malloc((size_t)size + 1) : NULL;
     size_t got = text ? fread(text, 1, (size_t)size, f) : 0;
     fclose(f);
-    if (!text || got != (size_t)size) { free(text); LOG("config: cannot read %s, menu changes are not saved\n", loaded_path); return; }
+    if (!text || got != (size_t)size) { free(text); LOG("config: cannot read %s, menu changes are not saved\n", loaded_path); return 0; }
     text[size] = 0;
+    if (memchr(text, 0, (size_t)size)) {    /* UTF-16 or binary: the line walk below would cut it short */
+        free(text); LOG("config: %s is not plain text, menu changes are not saved\n", loaded_path); return 0;
+    }
     char tmp[MAX_PATH + 8]; snprintf(tmp, sizeof tmp, "%s.new", loaded_path);
     FILE *o = fopen(tmp, "wb");
-    if (!o) { free(text); LOG("config: cannot write %s\n", tmp); return; }
+    if (!o) { free(text); LOG("config: cannot write %s\n", tmp); return 0; }
     int done[64] = { 0 };
     const char *eol = strstr(text, "\r\n") ? "\r\n" : "\n";
     for (char *line = text; *line; ) {
@@ -155,13 +159,15 @@ void config_save(const char *const *keys, const char *const *vals, int nkeys) {
         else fwrite(line, 1, len, o);
         line += len;
     }
-    int last_nl = size > 0 && text[size - 1] == '\n';
+    int last_nl = size == 0 || text[size - 1] == '\n';
     for (int i = 0; i < nkeys && i < 64; i++)
         if (!done[i]) { fprintf(o, "%s%s = %s%s", last_nl ? "" : eol, keys[i], vals[i], eol); last_nl = 1; }
     free(text);
-    int ok = !ferror(o);
+    int ok = fflush(o) == 0 && !ferror(o);
+    if (ok) ok = FlushFileBuffers((HANDLE)_get_osfhandle(_fileno(o))) != 0;   /* on disk before it replaces the old file */
     ok = fclose(o) == 0 && ok;
-    if (ok) ok = MoveFileExA(tmp, loaded_path, MOVEFILE_REPLACE_EXISTING) != 0;
+    if (ok) ok = MoveFileExA(tmp, loaded_path, MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH) != 0;
     if (!ok) DeleteFileA(tmp);
     LOG(ok ? "config: menu settings written to %s\n" : "config: could not write %s, it is unchanged\n", loaded_path);
+    return ok;
 }

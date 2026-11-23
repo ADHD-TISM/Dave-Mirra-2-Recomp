@@ -130,7 +130,7 @@ int pad_menu_buttons(void) {
     for (int k = 0; k < 2; k++) {
         int s = slot[k];
         if (s < 0 || (k && s == slot[0])) continue;
-        if (!xi_present[s] && !(g_menu_open && (int)(t - retry[s]) >= 0)) continue;
+        if (g_menu_open ? (int)(t - retry[s]) < 0 : !xi_present[s]) continue;   /* paused: a failed slot waits a second */
         xi_state x;
         if (xi_get((DWORD)s, &x) == 0) b |= x.g.buttons; else retry[s] = t + 1000;
     }
