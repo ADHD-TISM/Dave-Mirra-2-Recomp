@@ -842,12 +842,15 @@ programs ran (another game, many Dave Mirra 1 runs, YouTube). Findings:
 ## Next step (recommended, 2026-11-22)
 1. Playtest further; add missing code from any message box. Every level now
    loads and rides in scripted crawls (see "Levels and cheats").
-2. Speed is good enough (user stopped optimizing at v0.1.5: each thread
-   needs under 8% of a 60 fps frame; user: smooth, no stutter). If stutter
-   under load comes back, buffering (a third frame in flight, a deeper audio
-   buffer) helps more than compute. Otherwise the VU stage is the limit
-   (VU1 programs ~57%, VIF ~20% of it), then the GS stage's to_vertex,
-   texture_from_memory and clut_load.
+2. Speed is good enough (user stopped optimizing at v0.1.5: each graphics
+   stage, VU 1.21 ms and GS 0.73 ms per frame, needs under 8% of a 60 fps
+   frame; the EE thread was not measured alone; user: smooth, no stutter).
+   If stutter under load comes back, buffering (a third frame in flight, a
+   deeper audio buffer) is expected to help more than compute (not tested).
+   Otherwise the VU stage is the limit (VU1 programs ~57%, VIF ~20% of it);
+   the last GS-stage profile (PROF_GS=2, after the state cache) had
+   to_vertex 7%, clut_load 6%, texture_from_memory 6%, vertex_kick 5% of
+   its samples, about 47% of them waiting (ring_next, ntdll).
 
 ## In-game menu (2026-11-22)
 Esc, or Back+Start on a gamepad, pauses the game and shows a menu over the
@@ -862,8 +865,9 @@ player 2 pad); Exit game (press twice).
   in present_rect_ (gs_gl.c menu_overlay), before the window shot.
 - Keys reach it through the window procedure (menu_on_key; Esc opens it);
   pads are polled (pad_menu_buttons: the player slots, slot 0 also with
-  gamepad = 0 while the menu is open). The motors stop while paused. On close it waits up
-  to 1.5 s for menu keys/buttons to be released so the game does not see them.
+  gamepad = 0 while the menu is open). The motors stop while paused. On
+  close it waits up to 1.5 s for menu keys/buttons to be released so the
+  game does not see them.
 - Applied at once: g_cfg fields (widescreen, stretch, smooth, gamepad,
   rumble, pad2 are read live), fullscreen through set_fullscreen, vsync
   through choose_vsync (now reads g_cfg.vsync each time), volume through
