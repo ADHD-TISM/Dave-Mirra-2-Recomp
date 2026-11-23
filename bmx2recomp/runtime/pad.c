@@ -126,13 +126,16 @@ int pad_menu_buttons(void) {
     /* only slots pad_vsync found a pad in (it keeps the miss count); while the
        game is paused g_frame stands still, so an empty slot is tried once a
        second by the clock instead */
-    static DWORD retry[4]; DWORD t = GetTickCount(); int b = 0;
+    static DWORD retry_at[4]; static unsigned char waiting[4]; DWORD t = GetTickCount(); int b = 0;
     for (int k = 0; k < 2; k++) {
         int s = slot[k];
         if (s < 0 || (k && s == slot[0])) continue;
-        if (g_menu_open ? (int)(t - retry[s]) < 0 : !xi_present[s]) continue;   /* paused: a failed slot waits a second */
+        /* paused: a slot whose read failed waits a second (the difference is only taken
+           while waiting, 1 s from the failure, so the 49.7-day tick wrap cannot block it) */
+        if (g_menu_open ? waiting[s] && (int)(t - retry_at[s]) < 0 : !xi_present[s]) continue;
         xi_state x;
-        if (xi_get((DWORD)s, &x) == 0) b |= x.g.buttons; else retry[s] = t + 1000;
+        if (xi_get((DWORD)s, &x) == 0) { b |= x.g.buttons; waiting[s] = 0; }
+        else { waiting[s] = 1; retry_at[s] = t + 1000; }
     }
     return b;
 }

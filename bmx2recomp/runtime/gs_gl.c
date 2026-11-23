@@ -1324,7 +1324,8 @@ static void present_rect_(u32 fbp, u32 fbw, u32 psm, u32 dbx, u32 dby, u32 w, u3
     glClearColor(0, 0, 0, 1); glClear(GL_COLOR_BUFFER_BIT);
     if (src) {
         extern int ws_active(void);
-        int an = ws_active() ? 16 : 4, ad = ws_active() ? 9 : 3;   /* 4:3, or 16:9 with widescreen (as the cameras were made) */
+        int ws = ws_active();                     /* once: the EE thread may change it meanwhile */
+        int an = ws ? 16 : 4, ad = ws ? 9 : 3;   /* 4:3, or 16:9 with widescreen (as the cameras were made) */
         int vw = cw, vh = cw * ad / an;
         if (vh > ch) { vh = ch; vw = ch * an / ad; }
         if (g_cfg.stretch) { vw = cw; vh = ch; }
@@ -1370,7 +1371,8 @@ static void present_rect_(u32 fbp, u32 fbw, u32 psm, u32 dbx, u32 dby, u32 w, u3
     {   /* time between presents as the screen gets them: a gap over 20 ms is a frame shown twice */
         static LARGE_INTEGER last; static int have;
         extern volatile int g_menu_open;
-        if (g_menu_open) have = -1;             /* the in-game menu's presents are not frames, nor the gap after it */
+        int menu = g_menu_open;                   /* once: it may close meanwhile */
+        if (menu) have = -1;             /* the in-game menu's presents are not frames, nor the gap after it */
         else if (have > 0 && g_frame > 60) {
             double gap = (double)(t1.QuadPart - last.QuadPart) * 1000.0 / fq.QuadPart;
             n_presents++;
@@ -1381,7 +1383,7 @@ static void present_rect_(u32 fbp, u32 fbw, u32 psm, u32 dbx, u32 dby, u32 w, u3
             }
             if (gap > present_gap_max && g_frame > 6600) present_gap_max = gap;
         }
-        if (!g_menu_open) have = 1;
+        if (!menu) have = 1;
         last = t1;
     }
 }

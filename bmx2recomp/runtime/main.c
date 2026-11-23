@@ -135,15 +135,20 @@ static float game_tan(int half) {
    The frustum hook uses its camera's value, and the picture shape follows the
    camera the game built a frustum for last (g_ws_active), so they always match
    the projection. Before any camera: the setting. */
-static struct { u32 cam; int ws; } cam_ws[32];
+static struct { u32 cam; int ws; u64 used; } cam_ws[32];   /* used: last frustum or set (least used goes first) */
+static u64 cam_clock;
+/* the camera's value, or -1 for a camera made before the table knew it */
 static int cam_ws_of(u32 cam) {
-    for (int i = 0; i < 32; i++) if (cam_ws[i].cam == cam) return cam_ws[i].ws;
-    return g_cfg.widescreen;
+    for (int i = 0; i < 32; i++) if (cam_ws[i].used && cam_ws[i].cam == cam) { cam_ws[i].used = ++cam_clock; return cam_ws[i].ws; }
+    return -1;
 }
 static void cam_ws_set(u32 cam, int ws) {
-    static int next;
-    for (int i = 0; i < 32; i++) if (cam_ws[i].cam == cam) { cam_ws[i].ws = ws; return; }
-    cam_ws[next].cam = cam; cam_ws[next].ws = ws; next = (next + 1) & 31;
+    int k = 0;
+    for (int i = 0; i < 32; i++) {
+        if (cam_ws[i].used && cam_ws[i].cam == cam) { k = i; break; }
+        if (cam_ws[i].used < cam_ws[k].used) k = i;
+    }
+    cam_ws[k].cam = cam; cam_ws[k].ws = ws; cam_ws[k].used = ++cam_clock;
 }
 volatile int g_ws_active = -1;
 int ws_active(void) { return g_ws_active < 0 ? g_cfg.widescreen : g_ws_active; }
@@ -164,8 +169,10 @@ int ee_hook(u32 a) {
         static int inner;
         if (inner) return 0;
         u32 cam = GW(4) & 0x1ffffff;
-        g_ws_active = cam_ws_of(cam);
-        if (!g_ws_active) return 0;
+        int ws = cam_ws_of(cam);
+        if (ws >= 0) g_ws_active = ws;           /* the picture shape follows a known camera only */
+        else ws = g_cfg.widescreen;
+        if (!ws) return 0;
         if (!ee_ptr(cam) || !ee_ptr(cam + 1100)) return 0;
         u16 fov; memcpy(&fov, ee_ptr(cam + 56), 2);
         float h = camf(cam + 28), w = camf(cam + 24);
