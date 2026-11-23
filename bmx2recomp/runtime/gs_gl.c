@@ -137,9 +137,13 @@ static void set_fullscreen(HWND h, int on) {
     is_full = on;
 }
 
+int menu_on_key(WPARAM vk);
 static LRESULT CALLBACK wndproc(HWND h, UINT m, WPARAM w, LPARAM l) {
     switch (m) {
-    case WM_KEYDOWN: if (w == VK_F11) { set_fullscreen(h, !is_full); return 0; } break;
+    case WM_KEYDOWN:
+        if (w == VK_F11) { set_fullscreen(h, !is_full); return 0; }
+        if (menu_on_key(w)) return 0;   /* Esc opens the in-game menu; while open it takes the keys */
+        break;
     case WM_SYSKEYDOWN: if (w == VK_RETURN && (l & (1 << 29))) { set_fullscreen(h, !is_full); return 0; } break;
     case WM_CLOSE: LOG("gs: window closed\n"); exit(0);
     case WM_PAINT: { PAINTSTRUCT ps; BeginPaint(h, &ps); EndPaint(h, &ps); return 0; }
@@ -168,6 +172,14 @@ static BOOL CALLBACK mon_cb(HMONITOR m, HDC d, LPRECT r, LPARAM p) {
     return TRUE;
 }
 
+/* menu.c: window state and settings it changes (EE thread, which owns the window) */
+int gsgl_window_shown(void) { return wnd && shown; }
+int gsgl_is_fullscreen(void) { return is_full; }
+void gsgl_set_fullscreen(int on) { if (wnd && shown) set_fullscreen(wnd, on); }
+static volatile int vsync_recheck, scale_req;
+void gsgl_recheck_vsync(void) { vsync_recheck = 1; }
+void gsgl_request_scale(int s) { scale_req = s; }
+int gsgl_scale(void) { return scale_req ? scale_req : S; }
 int gsgl_has_focus(void) { return wnd && shown && GetForegroundWindow() == wnd; }
 
 void gsgl_pump(void) {
@@ -1213,7 +1225,55 @@ void gsgl_present_rect(u32 fbp, u32 fbw, u32 psm, u32 dbx, u32 dby, u32 w, u32 h
     if (g_frame == ft_from) { ft_tex = ft_state = ft_draw = ft_present = n_selfcopy = 0; ft_from_cyc = __rdtsc(); }
     u64 c = __rdtsc(); present_rect_(fbp, fbw, psm, dbx, dby, w, h); ft_present += __rdtsc() - c;
 }
+/* a new internal resolution (in-game menu): every target gives its drawing back
+ * to GS memory and goes, depth buffers too; they come back at the new scale
+ * from memory as the game draws (one frame at PS2 detail) */
+static void apply_scale(int s) {
+    gsgl_flush();
+    for (int i = 0; i < NT; i++) if (tg[i].used) { target_download(&tg[i]); target_free(&tg[i]); }
+    for (int i = 0; i < 16; i++) if (zt[i].used) { glDeleteTextures(1, &zt[i].tex); memset(&zt[i], 0, sizeof zt[i]); }
+    LOG("gs: 3D resolution %dx -> %dx\n", S, s);
+    S = s;
+}
+
+/* the in-game menu over the picture (menu.c draws the bitmap) */
+void menu_size(int *w, int *h); void menu_render(u32 *pix); int menu_version(void);
+static void menu_overlay(int cw, int ch) {
+    static GLuint mt; static int mver = -1, mw, mh;
+    if (cw <= 0 || ch <= 0) return;
+    if (!mt) { menu_size(&mw, &mh); mt = new_tex(mw, mh, GL_RGBA8, GL_RGBA, GL_UNSIGNED_BYTE); }
+    if (menu_version() != mver) {
+        mver = menu_version();
+        u32 *pix = malloc((size_t)mw * mh * 4);
+        menu_render(pix);
+        glBindTexture(GL_TEXTURE_2D, mt);
+        glPixelStorei(GL_UNPACK_ALIGNMENT, 4);
+        glTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, mw, mh, GL_RGBA, GL_UNSIGNED_BYTE, pix);
+        free(pix);
+    }
+    /* 90% of the window height at most, never wider than 90% of it */
+    float hh = ch * 0.9f, ww = hh * mw / mh;
+    if (ww > cw * 0.9f) { ww = cw * 0.9f; hh = ww * mh / mw; }
+    if (hh > mh * 1.5f) { hh = mh * 1.5f; ww = hh * mw / mh; }
+    float x0 = -ww / cw, x1 = ww / cw, y0 = hh / ch, y1 = -hh / ch;
+    glViewport(0, 0, cw, ch);
+    glEnable(GL_BLEND);   /* batches leave their own equation (subtract, dual-source): set all of it */
+    glBlendEquationSeparate(GL_FUNC_ADD, GL_FUNC_ADD);
+    glBlendFuncSeparate(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA, GL_ONE, GL_ZERO);
+    glUseProgram(cprog);
+    glActiveTexture(GL_TEXTURE0); glBindTexture(GL_TEXTURE_2D, mt);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+    glUniform4f(cu_dst, x0, y0, x1, y1);
+    glUniform4f(cu_src, 0, 0, 1, 1);
+    glUniform1i(cu_alpha1, 0);
+    glBindVertexArray(vao);
+    glDrawArrays(GL_TRIANGLE_STRIP, 0, 4);
+    glDisable(GL_BLEND);
+}
+
 static void present_rect_(u32 fbp, u32 fbw, u32 psm, u32 dbx, u32 dby, u32 w, u32 h) {
+    if (scale_req && scale_req != S) apply_scale(scale_req);
     gsgl_flush();
     async_issue_all();   /* this frame's texture-read rows: read back without waiting, used next frame */
     shot_frame++;
@@ -1287,6 +1347,7 @@ static void present_rect_(u32 fbp, u32 fbw, u32 psm, u32 dbx, u32 dby, u32 w, u3
         glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
         glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
     }
+    { extern volatile int g_menu_visible; if (g_menu_visible) menu_overlay(cw, ch); }   /* in-game menu (menu.c) */
     {   /* GS_SHOT_WINDOW=1: with GS_SHOT, also save the presented window (debugging the present filter) */
         static int ww = -1; if (ww < 0) ww = getenv("GS_SHOT_WINDOW") != 0;
         if (ww && shot && cw > 0 && ch > 0) {
@@ -1297,7 +1358,7 @@ static void present_rect_(u32 fbp, u32 fbw, u32 psm, u32 dbx, u32 dby, u32 w, u3
             free(pix); free(flip);
         }
     }
-    if (frames_since_check++ % 120 == 0) choose_vsync();
+    if (frames_since_check++ % 120 == 0 || vsync_recheck) { vsync_recheck = 0; choose_vsync(); }
     LARGE_INTEGER t0, t1, fq; QueryPerformanceCounter(&t0);
     if (ftimes) ftimes_before_swap((u64)t0.QuadPart);
     SwapBuffers(dc);
@@ -1337,8 +1398,9 @@ static int display_hz(void) {
     return (int)dm.dmDisplayFrequency;
 }
 static void choose_vsync(void) {
-    static int no_vsync = -1;
-    if (no_vsync < 0) no_vsync = getenv("NO_VSYNC") != 0 || !g_cfg.vsync;
+    static int env_off = -1;
+    if (env_off < 0) env_off = getenv("NO_VSYNC") != 0;
+    int no_vsync = env_off || !g_cfg.vsync;   /* g_cfg.vsync: the in-game menu may change it */
     int want = 0, hz = shown ? display_hz() : 0;
     if (shown && !g_turbo && !no_vsync && swap_interval_fn)
         for (int k = 1; k <= 4; k++) if (hz >= 59 * k && hz <= 61 * k) { want = k; break; }

@@ -572,6 +572,11 @@ void gs_present_from(const u64 *priv) {
     gsgl_present_rect(fbp, fbw, psm, dbx, dby, w, h);
 }
 
+/* the in-game menu (menu.c): show the last frame again (the overlay is drawn on top) */
+void gs_present_again(void) {
+    if (g_gs_mt) gst_present(gs_priv); else gs_present_from(gs_priv);
+}
+
 /* EE side: GIF path 3 (DMA ch2, GIF FIFO) */
 void gif_dma(const u8 *p, u32 nqw, int path) {
     if (g_gs_mt) gst_gif(p, nqw, path); else gif_transfer(p, nqw, path);

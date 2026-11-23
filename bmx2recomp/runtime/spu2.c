@@ -293,6 +293,12 @@ static void mix_frame(s32 *l, s32 *r) {
     }
 }
 
+int g_spu_volume = -1;
+static void spu2_volume_init(void) {
+    const char *e = getenv("SPU_VOLUME"); int v = e ? atoi(e) : 100;
+    g_spu_volume = v < 0 ? 0 : v > 100 ? 100 : v;
+}
+
 /* mix up to the current emulated time */
 void spu2_update(void) {
     if (!started) { started = 1; start_cyc = ee.cycles; }
@@ -301,9 +307,10 @@ void spu2_update(void) {
     while (mixed < target) {
         s32 l = 0, r = 0;
         mix_frame(&l, &r);
-        {   /* SPU_VOLUME=<percent> (default 100): output volume, e.g. 50 for test runs */
-            static int vol = -1;
-            if (vol < 0) { const char *e = getenv("SPU_VOLUME"); vol = e ? atoi(e) : 100; if (vol < 0) vol = 0; }
+        {   /* SPU_VOLUME=<percent> (default 100, bmx2.ini volume): output volume, e.g. 50 for
+               test runs; the in-game menu (menu.c) changes g_spu_volume */
+            if (g_spu_volume < 0) spu2_volume_init();
+            int vol = g_spu_volume;
             if (vol != 100) { l = l * vol / 100; r = r * vol / 100; }
         }
         if (l > 32767) l = 32767; if (l < -32768) l = -32768;
@@ -353,7 +360,8 @@ static DWORD WINAPI audio_thread(void *p) {
                 if (pending >= 2) break;                       /* still playing: wait for more */
                 memset(wbuf[k], 0, MINF * 4); n = 0;           /* about to run dry: a little silence */
                 hdr[k].dwBufferLength = MINF * 4;
-                if (g_frame > 120) { n_spu_underruns++; if (g_log_sys && n_spu_underruns <= 60) LOG("spu2: underrun at frame %llu\n", (unsigned long long)g_frame); }
+                extern volatile int g_menu_open;
+                if (g_frame > 120 && !g_menu_open) { n_spu_underruns++; if (g_log_sys && n_spu_underruns <= 60) LOG("spu2: underrun at frame %llu\n", (unsigned long long)g_frame); }
             } else {
                 /* With vsync pacing the game runs at the display's 60.00 Hz instead
                  * of 59.94, so it mixes 48048 frames a second for a 48000 device.

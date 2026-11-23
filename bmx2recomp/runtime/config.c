@@ -94,9 +94,12 @@ static void set(const char *k, char *v, int line) {
     }
 }
 
+static char loaded_path[MAX_PATH];   /* config_save writes back here; empty = no file was read */
+
 void config_load(const char *path) {
     FILE *f = fopen(path, "r");
     if (!f) return;
+    snprintf(loaded_path, sizeof loaded_path, "%s", path);
     char buf[512];
     int line = 0;
     while (fgets(buf, sizeof buf, f)) {
@@ -110,4 +113,41 @@ void config_load(const char *path) {
     }
     fclose(f);
     LOG("config: read %s\n", path);
+}
+
+/* The in-game menu (menu.c) changed these settings: write them into bmx2.ini.
+ * Each `key = value` line of the file is replaced in place (comments, order and
+ * the other settings stay), a key the file lacks is added at the end. Only when
+ * a bmx2.ini was read at start-up: development runs without one keep it so. */
+void menu_ini_value(const char *key, char *out, size_t n);
+void config_save(const char *const *keys, int nkeys) {
+    if (!loaded_path[0] || nkeys <= 0) { LOG("config: no bmx2.ini was read, menu changes are not saved\n"); return; }
+    FILE *f = fopen(loaded_path, "r");
+    if (!f) { LOG("config: cannot read %s, menu changes are not saved\n", loaded_path); return; }
+    char *lines[1024]; int n = 0, done[64] = { 0 };
+    char buf[512];
+    while (n < 1024 && fgets(buf, sizeof buf, f)) {
+        char *s = trim(buf), name[64] = "";
+        if (*s && *s != '#' && *s != ';') {
+            char *eq = strchr(s, '=');
+            if (eq) { size_t k = (size_t)(eq - s); if (k >= sizeof name) k = sizeof name - 1; memcpy(name, s, k); name[k] = 0; }
+        }
+        char *t = trim(name), out[600];
+        int hit = -1;
+        for (int i = 0; i < nkeys && i < 64; i++) if (*t && !_stricmp(t, keys[i])) hit = i;
+        if (hit >= 0) {
+            char v[64]; menu_ini_value(keys[hit], v, sizeof v);
+            snprintf(out, sizeof out, "%s = %s", keys[hit], v); done[hit] = 1;
+        } else snprintf(out, sizeof out, "%s", s);
+        lines[n++] = _strdup(out);
+    }
+    fclose(f);
+    char tmp[MAX_PATH + 8]; snprintf(tmp, sizeof tmp, "%s.new", loaded_path);
+    FILE *o = fopen(tmp, "w");
+    if (!o) { LOG("config: cannot write %s\n", tmp); for (int i = 0; i < n; i++) free(lines[i]); return; }
+    for (int i = 0; i < n; i++) { fprintf(o, "%s\n", lines[i]); free(lines[i]); }
+    for (int i = 0; i < nkeys && i < 64; i++)
+        if (!done[i]) { char v[64]; menu_ini_value(keys[i], v, sizeof v); fprintf(o, "%s = %s\n", keys[i], v); }
+    int ok = fclose(o) == 0 && MoveFileExA(tmp, loaded_path, MOVEFILE_REPLACE_EXISTING);
+    LOG(ok ? "config: menu settings written to %s\n" : "config: could not replace %s\n", loaded_path);
 }

@@ -113,6 +113,18 @@ static void rumble_stop_all(void) {
     for (int i = 0; i < 4; i++) if (rumble_now[i]) { rumble_retry[i] = 0; rumble_send(i, 0); }
 }
 
+/* menu.c: the raw XInput buttons of the first two pads (the menu reads them even
+   with gamepad = 0 while it is open, so a pad can always leave it), and a stop
+   for the motors while the game is paused */
+int pad_menu_buttons(void) {
+    extern volatile int g_menu_open;
+    if (!g_cfg.gamepad && !g_menu_open) return 0;
+    xi_state x; int b = 0;
+    for (DWORD i = 0; i < 2; i++) if (xi_read(i, &x)) b |= x.g.buttons;
+    return b;
+}
+void pad_rumble_stop(void) { rumble_stop_all(); }
+
 /* newest motor values the game DMA'd for a port: large << 8 | small (0 = off) */
 static u16 rumble_read(int port) {
     u32 a = act_buf[port];

@@ -837,6 +837,37 @@ programs ran (another game, many Dave Mirra 1 runs, YouTube). Findings:
    stage is still the limit (VU1 programs ~57%, VIF ~20% of it); the GS
    stage's vertex_kick, build_state, clut_load come next once it is faster.
 
+## In-game menu (2026-11-22)
+Esc, or Back+Start on a gamepad, pauses the game and shows a menu over the
+picture: Resume; Display (widescreen, picture shape, filter, fullscreen,
+vsync, 3D resolution 1-4x); Sound (volume); Controls (gamepad, vibration,
+player 2 pad); Exit game (press twice).
+- runtime/menu.c. menu_vsync (kernel.c, each vblank after gs_vsync, before
+  pad_vsync) runs the menu loop on the EE thread, so the game is paused: it
+  pumps window messages, presents the last frame again (gs_present_again),
+  sleeps 16 ms. The overlay is a GDI bitmap (menu_render, Segoe UI) that the
+  presenting thread uploads when menu_version changes and draws with blending
+  in present_rect_ (gs_gl.c menu_overlay), before the window shot.
+- Keys reach it through the window procedure (menu_on_key; Esc opens it);
+  pads are polled (pad_menu_buttons: slots 0 and 1, also with gamepad = 0
+  while the menu is open). The motors stop while paused. On close it waits up
+  to 1.5 s for menu keys/buttons to be released so the game does not see them.
+- Applied at once: g_cfg fields (widescreen, stretch, smooth, gamepad,
+  rumble, pad2 are read live), fullscreen through set_fullscreen, vsync
+  through choose_vsync (now reads g_cfg.vsync each time), volume through
+  g_spu_volume (spu2.c), 3D resolution through apply_scale on the presenting
+  thread: every target is written back to GS memory and freed, depth buffers
+  too; they return at the new scale as the game draws.
+- Settings changed in the menu are written into bmx2.ini on close
+  (config_save): each `key = value` line is replaced in place, missing keys
+  are appended. Only if a bmx2.ini was read at start-up.
+- Not in turbo or without a window. Audio is silent while paused (spu2
+  underruns are not counted then); pace() restarts its schedule after it.
+- MENU_TEST=<frame>:<keys> (up down left right ok back) opens it in a
+  scripted run and feeds one key every 4 passes; GS_SHOT_WINDOW=1 shoots the
+  window with the overlay. Tested: 2x->3x, 4x->2x, widescreen, volume,
+  gamepad, ini rewrite, exit.
+
 ## Skip intro movies (2026-11-21)
 bmx2.ini skip_intro = 1 (launcher Gameplay tab, off by default). The boot
 movies are ACCLAIM.PSS (frame 140), ZINTRO.PSS (266) and INTRO.PSS (394);
