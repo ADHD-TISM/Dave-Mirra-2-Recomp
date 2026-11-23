@@ -1412,17 +1412,42 @@ static int display_hz(void) {
     if (!EnumDisplaySettingsA(mi.szDevice, ENUM_CURRENT_SETTINGS, &dm)) return 0;
     return (int)dm.dmDisplayFrequency;
 }
+/* 1 NVIDIA, 2 Intel, 3 AMD, 0 unknown */
+static int gpu_vendor(const char *s) {
+    if (!s) return 0;
+    if (strstr(s, "NVIDIA")) return 1;
+    if (strstr(s, "Intel")) return 2;
+    if (strstr(s, "AMD") || strstr(s, "Radeon")) return 3;
+    return 0;
+}
+static int gl_vendor;   /* of the context's renderer, set at start-up */
+/* 1 when the window's monitor hangs on a different graphics chip than the one
+ * rendering (a two-chip laptop: NVIDIA draws, the Intel chip drives the panel).
+ * The picture is then copied between the chips, and the driver's vsync on that
+ * path returned unevenly: on a GTX 1050 Ti + UHD 630 laptop, 52 of 940 riding
+ * frames reached the screen over 20 ms apart with vsync and 3 without. */
+static int display_on_other_chip(void) {
+    HMONITOR m = MonitorFromWindow(wnd, MONITOR_DEFAULTTONEAREST);
+    MONITORINFOEXA mi; mi.cbSize = sizeof mi;
+    if (!gl_vendor || !GetMonitorInfoA(m, (MONITORINFO *)&mi)) return 0;
+    DISPLAY_DEVICEA dd;
+    for (DWORD i = 0; dd.cb = sizeof dd, EnumDisplayDevicesA(NULL, i, &dd, 0); i++)
+        if (!strcmp(dd.DeviceName, mi.szDevice)) { int v = gpu_vendor(dd.DeviceString); return v && v != gl_vendor; }
+    return 0;
+}
 static void choose_vsync(void) {
     static int env_off = -1;
     if (env_off < 0) env_off = getenv("NO_VSYNC") != 0;
     int no_vsync = env_off || !g_cfg.vsync;   /* g_cfg.vsync: the in-game menu may change it */
-    int want = 0, hz = shown ? display_hz() : 0;
-    if (shown && !g_turbo && !no_vsync && swap_interval_fn)
+    int want = 0, hz = shown ? display_hz() : 0, other = 0;
+    if (shown && !g_turbo && !no_vsync && swap_interval_fn && !(other = display_on_other_chip()))
         for (int k = 1; k <= 4; k++) if (hz >= 59 * k && hz <= 61 * k) { want = k; break; }
-    if (want != vsync_interval) {
-        swap_interval_fn(want);
-        vsync_interval = want;
-        LOG("gs: %s (display %d Hz)\n", want ? "frames paced by vsync" : "vsync off, timer pacing", hz);
+    static int last_other;
+    if (want != vsync_interval || other != last_other) {
+        if (want != vsync_interval) swap_interval_fn(want);
+        vsync_interval = want; last_other = other;
+        LOG("gs: %s (display %d Hz%s)\n", want ? "frames paced by vsync" : "vsync off, timer pacing", hz,
+            other ? ", driven by another graphics chip" : "");
     }
 }
 int gsgl_vsync_paced(void) { return vsync_interval > 0; }
@@ -1497,6 +1522,7 @@ int gsgl_init(int show_window, int scale) {
 #undef X
     LOG("gs: OpenGL %s (%s), scale %dx, window on %s%s\n", (const char *)glGetString(GL_VERSION), (const char *)glGetString(GL_RENDERER),
         S, mon_found ? mon_name : "the default monitor", mon_found == 2 ? " (Dell 3440x1440)" : "");
+    gl_vendor = gpu_vendor((const char *)glGetString(GL_RENDERER));
 
     prog = link(vs_src, fs_src);
     cprog = link(cvs_src, cfs_src);
