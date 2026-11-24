@@ -1452,8 +1452,8 @@ static void choose_vsync(void) {
         if (want != vsync_interval) swap_interval_fn(want);
         vsync_interval = want; last_other = other;
         LOG("gs: %s (display %d Hz%s)\n", want ? "frames paced by vsync" : "vsync off, timer pacing", hz,
-            !other ? "" : want ? ", driven by another graphics chip; vsync_two_chip = 1"
-                               : ", driven by another graphics chip");
+            !other ? "" : g_cfg.vsync_two_chip ? ", driven by another graphics chip; vsync_two_chip = 1"
+                                               : ", driven by another graphics chip");
     }
 }
 int gsgl_vsync_paced(void) { return vsync_interval > 0; }

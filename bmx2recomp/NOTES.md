@@ -293,8 +293,9 @@ frames 125 -> 40. No audio underruns in the level either way.
   swap alone does not hold the rate: in a window the compositor followed the
   120 Hz primary). Off: `vsync = 0` in bmx2.ini or NO_VSYNC=1, and when
   the window's monitor is driven by another graphics chip than the renderer
-  unless `vsync_two_chip = 1` (see "Two-chip laptops"). Audio: the waveOut thread skips 1 frame in 256 while more than ~64 ms is queued
-  (exit line "frames dropped for drift").
+  unless `vsync_two_chip = 1` (see "Two-chip laptops"). Audio: the waveOut
+  thread skips 1 frame in 256 while more than ~64 ms is queued (exit line
+  "frames dropped for drift").
 - Graphics thread (runtime/gsthread.c): VIF1, VU1, the GS front end and all
   GL run on a worker. The EE copies VIF1 DMA data and GIF path 3 data into a
   64 MB ring; a scan-only VIF1 (vif.c unit 2) on the EE follows the stream for
