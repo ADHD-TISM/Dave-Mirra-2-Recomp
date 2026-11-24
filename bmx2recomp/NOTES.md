@@ -35,7 +35,7 @@ are older snapshots, kept for history.
   The guide says to keep the project's own installer, so bmx2launcher.py
   stays as the one program players get ("Dave Mirra Freestyle BMX 2.exe"),
   without its Tk window: `--root DIR --disc=FILE prepare [--accept-downloads]`
-  is the setup step (progress lines, exit 3 when downloads are needed but not
+  is the setup step (progress lines, exit 10 when downloads are needed but not
   allowed, "Already built" when nothing changed), `run [game args]` starts
   the game and returns its exit code, and no command starts a built game or
   shows a message box. release.sh packs the project version into the exe
@@ -51,15 +51,17 @@ are older snapshots, kept for history.
   also pass). Not in the RecompLauncher catalog yet (badge links the site).
 - runtime/main.c: RECOMPLAUNCHER_MODE=bigpicture starts fullscreen.
 - Review fixes: without --root the program uses RECOMPLAUNCHER_DATA (Easy
-  Setup skipped); prepare exits 3 when a new release's project version is
-  missing and downloads are not allowed, and never looks up the newest tag
-  under RECOMPLAUNCHER=1; release_tag only in the packaged exe; release.sh
-  takes only vX.Y.Z and checks the tag is HEAD, pushed and the tree clean
+  Setup skipped); prepare exits 10 (not 3: the game's 3, 4, 5 have messages)
+  when a new release's project version is missing and downloads are not
+  allowed; a release zip (pinned version) never looks up the newest tag;
+  release_tag only in the packaged exe; release.sh takes only vX.Y.Z and
+  checks the tag is HEAD here and on origin, and the tree clean
   (TRY_RELEASE=1 skips that); build_key also hashes the link recipe and
   compiler name; bmx2.exe goes into place last (it is prepare.done); run
   puts the game in a kill-on-close job so it ends with the program; the
   last 3 logs are kept; nothing uncaught escapes (a windowed exe would show
-  a dialog); exit_codes 3 and 4.
+  a dialog; after a double click a message box says what failed);
+  exit_codes 3, 4 and 5; build_key also hashes the compile flags.
 - Not done (Recomp Standards): CHD input (PS2 DVD CHDs use lzma/zlib/huff/
   flac hunks, medium), a Linux build, Recomp Achievements, dumps values,
   key bindings and window size as RecompLauncher settings (ini only), a new

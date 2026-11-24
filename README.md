@@ -114,7 +114,7 @@ after every session. Without it, back the folder up yourself.
   version 1.00 (SLUS-20159) and is not compressed.
 - **A message box says the game called code that was not recompiled:** please
   open an issue with a screenshot of the message and what you were doing.
-- **The setup step stopped with code 3:** tick **Download the build tools and
+- **The setup step stopped with code 10:** tick **Download the build tools and
   the project's source** on the setup screen (or add `--accept-downloads`).
 - **Stutter:** make sure V-Sync is on in Settings, and try a lower resolution.
   Most laptops with two graphics chips from different makers (NVIDIA or AMD

@@ -156,7 +156,8 @@
   ],
   "exit_codes": {
     "3": "The game reached code that was not recompiled yet. Please open an issue on the project's GitHub page and say what you were doing.",
-    "4": "The game ran into an instruction the recompiler doesn't handle. Please open an issue on the project's GitHub page with the log."
+    "4": "The game ran into an instruction the recompiler doesn't handle. Please open an issue on the project's GitHub page with the log.",
+    "5": "OpenGL 3.3 could not start. Update your graphics driver; on a laptop with two graphics chips, set the game to the dedicated one in Windows' graphics settings."
   },
   "looks": {
     "allowed": false,

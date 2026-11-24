@@ -9,12 +9,18 @@ V=${1:?usage: sh launcher/release.sh <version, like v1.2.3> [out folder]}
 if ! printf '%s\n' "$V" | grep -Eq '^v[0-9]+(\.[0-9]+)*$'; then
     echo "the version must look like v1.2.3, not $V" >&2; exit 2
 fi
-# players' setup step downloads the project at this tag, so it must be this commit and on GitHub
+# players' setup step downloads the project at this tag, so it must be this commit, here and on GitHub
 # (TRY_RELEASE=1 skips these checks, for a test zip that is never published)
-if [ -z "$TRY_RELEASE" ]; then
-    [ -z "$(git status --porcelain --untracked-files=no)" ] || { echo "the working tree has changes: commit them first" >&2; exit 2; }
-    [ "$(git rev-parse "$V^{commit}" 2>/dev/null)" = "$(git rev-parse HEAD)" ] || { echo "tag $V is not on HEAD" >&2; exit 2; }
-    git ls-remote --exit-code --tags origin "refs/tags/$V" > /dev/null || { echo "tag $V is not pushed to origin" >&2; exit 2; }
+if [ "$TRY_RELEASE" != 1 ]; then
+    REPO_DIR=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
+    G() { git -C "$REPO_DIR" "$@"; }   # the repository, wherever this is run from (its path may have spaces)
+    HEAD=$(G rev-parse HEAD)
+    [ -z "$(G status --porcelain --untracked-files=no)" ] || { echo "the working tree has changes: commit them first" >&2; exit 2; }
+    [ "$(G rev-parse "$V^{commit}" 2>/dev/null)" = "$HEAD" ] || { echo "tag $V is not on HEAD" >&2; exit 2; }
+    # on GitHub the tag must name this commit too (^{} is an annotated tag's commit; a plain tag has none)
+    REMOTE=$(G ls-remote origin "refs/tags/$V^{}" | cut -f1)
+    [ -n "$REMOTE" ] || REMOTE=$(G ls-remote origin "refs/tags/$V" | cut -f1)
+    [ "$REMOTE" = "$HEAD" ] || { echo "tag $V on origin is ${REMOTE:-missing}, not HEAD: push the tag" >&2; exit 2; }
 fi
 OUT=${2:-$(dirname -- "$0")/dist}
 mkdir -p "$OUT"
