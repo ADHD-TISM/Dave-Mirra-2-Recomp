@@ -3,9 +3,8 @@
 // (tools/make_icon.py) and lives in the generated folder, never in the repo.
 1 ICON "bmx2.ico"
 
+// No version numbers: nothing ties them to the release tag, so they would drift.
 1 VERSIONINFO
-FILEVERSION 0,1,0,0
-PRODUCTVERSION 0,1,0,0
 FILEOS 0x40004
 FILETYPE 0x1
 BEGIN
@@ -14,8 +13,6 @@ BEGIN
     BLOCK "040904B0"
     BEGIN
       VALUE "FileDescription", "Dave Mirra Freestyle BMX 2"
-      VALUE "FileVersion", "0.1"
-      VALUE "ProductVersion", "0.1"
       VALUE "ProductName", "Dave Mirra Freestyle BMX 2"
       VALUE "InternalName", "bmx2"
       VALUE "OriginalFilename", "bmx2.exe"

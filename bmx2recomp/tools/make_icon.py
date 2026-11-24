@@ -19,8 +19,8 @@ def texture(data):
     magic, _shapes, ttype = struct.unpack_from("<III", data, 0)
     if magic != 0x00010000:
         raise SystemExit("ICON.DAT is not a PS2 icon (magic %08x)" % magic)
-    if ttype & 8:
-        raise SystemExit("ICON.DAT has a compressed texture (type %x), not handled" % ttype)
+    if ttype & 8 or not ttype & 4:
+        raise SystemExit("ICON.DAT has no plain texture (type %x), not handled" % ttype)
     raw = data[-TEX * TEX * 2:]
     px = []
     for i in range(TEX * TEX):

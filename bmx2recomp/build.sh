@@ -20,8 +20,12 @@ ls gen/*.c gen_iop/*.c runtime/*.c | xargs -P 16 -I{} sh -c '
     $CC $CFLAGS -c "$src" -o "$obj" || exit 255
   fi'
 # icon (from the disc's memory card icon) and name: runtime/bmx2.rc
-if [ ! -f gen/bmx2.ico ] && [ -f ../disc/ASSETS/ICON.DAT ]; then python -I tools/make_icon.py ../disc/ASSETS/ICON.DAT gen/bmx2.ico; fi
-if [ -f gen/bmx2.ico ]; then
+if [ -f ../disc/ASSETS/ICON.DAT ] && { [ ! -f gen/bmx2.ico ] || [ tools/make_icon.py -nt gen/bmx2.ico ]; }; then
+  python -I tools/make_icon.py ../disc/ASSETS/ICON.DAT gen/bmx2.ico
+fi
+if [ -f gen/bmx2.ico ] && ! command -v "${WINDRES:-windres}" >/dev/null; then
+  echo "no windres: building without the icon"; rm -f build/obj/bmx2_res.o
+elif [ -f gen/bmx2.ico ]; then
   res=build/obj/bmx2_res.o
   if [ ! -f $res ] || [ runtime/bmx2.rc -nt $res ] || [ gen/bmx2.ico -nt $res ]; then ${WINDRES:-windres} -I gen -i runtime/bmx2.rc -O coff -o $res; fi
 fi

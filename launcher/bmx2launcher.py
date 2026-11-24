@@ -464,7 +464,7 @@ def resolve_image(path):
 
 
 class Image:
-    """Reads files from the root directory of a raw 2352-byte-sector .bin or a 2048-byte-sector .iso."""
+    """Reads files by path (subfolders included) from a raw 2352-byte-sector .bin or a 2048-byte-sector .iso."""
     def __init__(self, path):
         self.path = resolve_image(path)
         n = os.path.getsize(self.path)
@@ -494,7 +494,7 @@ class Image:
             raise Fail("%s: bad directory on the disc" % os.path.basename(self.path))
         data = b"".join(self.sector(lba + i) for i in range((size + 2047) // 2048))[:size]
         out, p = {}, 0
-        while p + 34 < len(data):
+        while p + 34 <= len(data):
             n = data[p]
             if n == 0:
                 p = (p // 2048 + 1) * 2048
@@ -507,7 +507,7 @@ class Image:
         return out
 
     def root(self, dirs=False):
-        """{NAME: (lba, size)} for the files in the root directory."""
+        """{NAME: (lba, size)} for the files in the root directory, or with dirs=True its subfolders."""
         pvd = self.sector(16)
         if pvd[1:6] != b"CD001":
             raise Fail("%s is not a game disc image (no ISO 9660 file system)" % os.path.basename(self.path))
@@ -820,9 +820,11 @@ def compile_game(P, C, log, progress=None):
     with open(keyfile, "w") as f:
         json.dump(newkeys, f)
     res = _resources(P)
-    if res:
+    windres = os.path.join(os.path.dirname(P.clang), "x86_64-w64-mingw32-windres.exe")
+    if res and not os.path.isfile(windres):
+        log("no windres next to the compiler: building without the icon")
+    elif res:
         log("adding the icon")
-        windres = os.path.join(os.path.dirname(P.clang), "x86_64-w64-mingw32-windres.exe")
         ro = os.path.join(P.obj, "bmx2_res.o")     # a COFF object: lld would read a .res name as a raw .res file
         run([windres, "-I", P.gen, "-i", res[0], "-O", "coff", "-o", ro], log, cwd=P.root, env=env)
         objs.append(ro)

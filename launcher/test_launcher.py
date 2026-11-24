@@ -173,6 +173,52 @@ def test_bad_offsets_are_a_clear_error(d):
     expect_fail(lambda: bl.safe_extract(z, os.path.join(d, "o"), strip=1), "damaged")
 
 
+def _dirrec(name, lba, size, is_dir):
+    """One ISO 9660 directory record."""
+    n = name.encode("ascii")
+    rec = bytearray(33 + len(n) + (1 - len(n) % 2))
+    rec[0] = len(rec)
+    rec[2:6] = lba.to_bytes(4, "little"); rec[6:10] = lba.to_bytes(4, "big")
+    rec[10:14] = size.to_bytes(4, "little"); rec[14:18] = size.to_bytes(4, "big")
+    rec[25] = 2 if is_dir else 0
+    rec[32] = len(n)
+    rec[33:33 + len(n)] = n
+    return bytes(rec)
+
+
+def _make_iso(path):
+    """32 sectors: root (sector 20) with ASSETS/ and SLUS_201.59; ASSETS (sectors 21-22) with ICON.DAT
+    in its second sector; file data at 30 and 31."""
+    sec = [bytearray(2048) for _ in range(32)]
+    sec[16][0:6] = b"\x01CD001"
+    sec[16][156:156 + 34] = _dirrec("\0", 20, 2048, True)
+    sec[20][:] = (_dirrec("\0", 20, 2048, True) + _dirrec("\1", 20, 2048, True) + _dirrec("ASSETS", 21, 4096, True)
+                  + _dirrec("SLUS_201.59;1", 30, 5, False)).ljust(2048, b"\0")
+    sec[21][:] = (_dirrec("\0", 21, 4096, True) + _dirrec("\1", 20, 2048, True)
+                  + _dirrec("A.BIN;1", 30, 5, False)).ljust(2048, b"\0")
+    sec[22][:] = _dirrec("ICON.DAT;1", 31, 6, False).ljust(2048, b"\0")
+    sec[30][:5] = b"slus!"
+    sec[31][:6] = b"icon!!"
+    with open(path, "wb") as f:
+        f.write(b"".join(sec))
+
+
+def test_image_reads_subfolders(d):
+    p = os.path.join(d, "game.iso")
+    _make_iso(p)
+    im = bl.Image(p)
+    try:
+        check(im.read("SLUS_201.59") == b"slus!", "root file")
+        check(im.read("ASSETS/ICON.DAT") == b"icon!!", "file in the second sector of a subfolder")
+        check(im.read("assets/icon.dat") == b"icon!!", "names are case-insensitive")
+        check(set(im.root(dirs=True)) == {"ASSETS"}, "subfolders: %r" % im.root(dirs=True))
+        check(set(im.root()) == {"SLUS_201.59"}, "root files: %r" % im.root())
+        for bad in ("ASSETS/NOPE.DAT", "NOPE/ICON.DAT", "ASSETS/X/Y", "ASSETS"):
+            expect_fail(lambda b=bad: im.read(b), "is not on this disc")
+    finally:
+        im.close()
+
+
 def main():
     tests = [v for k, v in sorted(globals().items()) if k.startswith("test_")]
     failed = 0
