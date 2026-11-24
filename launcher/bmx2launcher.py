@@ -481,6 +481,14 @@ def resolve_image(path):
     return path
 
 
+def image_present(path):
+    """True when the image (and for a .cue, the .bin it names) is there."""
+    try:
+        return os.path.isfile(resolve_image(path))
+    except (Fail, OSError):
+        return False
+
+
 class Image:
     """Reads files by path (subfolders included) from a raw 2352-byte-sector .bin or a 2048-byte-sector .iso."""
     def __init__(self, path):
@@ -748,6 +756,7 @@ def _flags(P, src):
 
 
 LINK = ["-static", "-Wl,--stack,67108864", "-lwinmm", "-lgdi32", "-luser32", "-lopengl32"]
+RES_ARGS = ["-O", "coff"]     # windres: the icon as a COFF object the linker takes like any other
 
 
 def _resources(P):
@@ -761,7 +770,7 @@ def build_key(P):
     h = hashlib.sha256(b"build1")
     flags = [a for d in (os.path.join(P.project, "runtime"), P.gen) for a in _flags(P, os.path.join(d, "x.c"))
              if not os.path.isabs(a)]
-    h.update(repr((LINK, LLVM_NAME, flags)).encode())   # the compile and link recipe and the compiler
+    h.update(repr((LINK, LLVM_NAME, flags, RES_ARGS)).encode())   # the compile, icon and link recipe, the compiler
     for p in hdr + src + _resources(P):
         h.update(os.path.basename(p).encode())
         h.update(file_bytes(p))
@@ -847,7 +856,7 @@ def compile_game(P, C, log, progress=None):
     elif res:
         log("adding the icon")
         ro = os.path.join(P.obj, "bmx2_res.o")     # a COFF object: lld would read a .res name as a raw .res file
-        run([windres, "-I", P.gen, "-i", res[0], "-O", "coff", "-o", ro], log, cwd=P.root, env=env)
+        run([windres, "-I", P.gen, "-i", res[0]] + RES_ARGS + ["-o", ro], log, cwd=P.root, env=env)
         objs.append(ro)
     log("linking")
     os.makedirs(P.game, exist_ok=True)
@@ -1064,7 +1073,7 @@ def open_session(root, disc=None):
     return P, C
 
 
-NEEDS_DOWNLOADS = 10    # prepare's exit code; the game's own codes (3, 4, 5) mean something else
+NEEDS_DOWNLOADS = 10    # prepare's exit code; the game's own codes (3, 4, 5, 6) mean something else
 
 
 def prepare(P, C, accept, log):
@@ -1077,11 +1086,11 @@ def prepare(P, C, accept, log):
     disc = C.get("disc")
     if not disc:
         raise Fail("prepare: no disc image given (--disc=FILE)")
-    if not (toolchain_ok(P) and project_ok(P)):
-        if not accept:
-            print("the build tools and the project are not downloaded yet, and --accept-downloads was not given",
-                  flush=True)
-            return NEEDS_DOWNLOADS
+    if not (toolchain_ok(P) and project_ok(P)) and not accept:
+        print("the build tools and the project are not downloaded yet, and --accept-downloads was not given",
+              flush=True)
+        return NEEDS_DOWNLOADS
+    if not toolchain_ok(P):
         say(0.01, "Downloading the C compiler")
 
         def download_log(s):   # fetch logs "  compiler: 40% of 190.0 MB": show it on the setup screen too
@@ -1092,11 +1101,9 @@ def prepare(P, C, accept, log):
                     % ("C compiler" if m.group(1) == "compiler" else "Python", m.group(2)))
             log(s)
         install_toolchain(P, download_log)
+    if not project_ok(P):     # the first install: this release's version, or the newest for a build without one
         say(0.2, "Downloading the project")
-        if release_tag() or os.environ.get("RECOMPLAUNCHER") != "1":
-            install_project(P, C, log, want=release_tag())
-        else:   # a build without a packed version, added to RecompLauncher by hand: the newest one, as a first install
-            install_project(P, C, log)
+        install_project(P, C, log, want=release_tag())
     elif not accept and release_tag() and release_tag() != C.get("tag") and not is_working_copy(P):
         print("this release needs project version %s (installed: %s), and --accept-downloads was not given"
               % (release_tag(), C.get("tag", "none")), flush=True)
@@ -1234,9 +1241,14 @@ def main(argv):
         P, C = open_session(root, disc)
         if ready_to_play(P, C):
             return play(P, C, lambda s: print(s, flush=True), wait=True, extra=_words)   # the player's launch options
-        if os.path.isfile(P.exe):      # built, but the disc image it was built from is gone or moved
-            message = ("The game is built, but its disc image is not where it was (%s). Put it back, or pick it "
-                       "again (--disc=FILE, or Easy Setup in RecompLauncher)." % C.get("disc", "none chosen"))
+        pick = "pick it again (--disc=FILE, or Easy Setup in RecompLauncher)."
+        chosen = C.get("disc")
+        if os.path.isfile(P.exe) and chosen and not image_present(chosen):
+            message = "The game is built, but its disc image is not where it was (%s). Put it back, or %s" % (chosen, pick)
+        elif os.path.isfile(P.exe) and chosen:
+            message = ("The game is built, but %s is no longer %s (%s): %s" % (chosen, GAME_NAME, GAME_SERIAL, pick))
+        elif os.path.isfile(P.exe):
+            message = "The game is built, but no disc image is chosen: %s" % pick
         elif os.environ.get("RECOMPLAUNCHER") == "1":
             message = ("The game is not set up yet. Turn Easy Setup back on for it in RecompLauncher, pick your "
                        "disc image there and let it build the game.")

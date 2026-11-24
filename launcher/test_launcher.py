@@ -252,7 +252,7 @@ def _prepare(accept, **stubs):
                 install_toolchain=lambda P, log: calls.append("toolchain"),
                 install_project=lambda P, C, log, force=False, want=None: calls.append(("project", want)),
                 generate=lambda P, C, disc, log: calls.append("generate"),
-                compile_game=lambda P, C, log, progress=None: (calls.append("compile"), log("linking"), progress(1, 1)))
+                compile_game=lambda P, C, log, progress=None: (calls.append("compile"), progress(1, 1), log("linking")))
     base.update(stubs)
     out, real = io.StringIO(), sys.stdout
     sys.stdout = out
@@ -356,6 +356,71 @@ def test_no_command_uses_recomplauncher_data(d):
             else:
                 os.environ[k] = v
     check(code == 0 and seen == {"root": os.path.abspath(d), "wait": True, "extra": ["--fast"]}, (code, seen))
+
+
+def _no_command_message(d, disc):
+    """main() with no command, a built game in d and the chosen disc; the message box text."""
+    os.makedirs(os.path.join(d, "game"), exist_ok=True)
+    open(os.path.join(d, "game", "bmx2.exe"), "w").close()
+    boxes = []
+    keep = os.environ.get("RECOMPLAUNCHER_DATA")
+    os.environ["RECOMPLAUNCHER_DATA"] = d
+    try:
+        with _Stubs(open_session=lambda root, disc_: (bl.Paths(d), _FakeConfig(disc=disc)),
+                    ready_to_play=lambda P, C: False, message_box=boxes.append):
+            check(bl.main([]) == 1, "not 1")
+    finally:
+        if keep is None:
+            os.environ.pop("RECOMPLAUNCHER_DATA", None)
+        else:
+            os.environ["RECOMPLAUNCHER_DATA"] = keep
+    check(len(boxes) == 1, boxes)
+    return boxes[0]
+
+
+def test_no_command_says_what_is_wrong_with_the_disc(d):
+    check("not where it was" in _no_command_message(d, os.path.join(d, "gone.cue")), "moved")
+    here = os.path.join(d, "other.iso")
+    open(here, "w").close()
+    check("is no longer" in _no_command_message(d, here), "not this game's disc")
+    check("no disc image is chosen" in _no_command_message(d, None), "none chosen")
+
+
+def test_download_progress_only_goes_up(d):
+    def fake_toolchain(P, log):
+        for s in ("  compiler: 0% of 190.0 MB", "  compiler: 100% of 190.0 MB", "  python: 0% of 11.0 MB",
+                  "  python: 100% of 11.0 MB"):
+            log(s)
+    code, lines, _calls = _prepare(True, toolchain_ok=lambda P: False, project_ok=lambda P: False,
+                                   install_toolchain=fake_toolchain, built_ok=lambda P, C: False)
+    values = [float(l.split()[1]) for l in lines if l.startswith("progress ")]
+    check(code == 0 and values == sorted(values), values)
+
+
+def test_prepare_keeps_an_installed_project_when_only_the_tools_are_missing(d):
+    old = os.environ.get("RECOMPLAUNCHER")
+    os.environ["RECOMPLAUNCHER"] = "1"
+    try:
+        code, _lines, calls = _prepare(True, toolchain_ok=lambda P: False)   # unpinned, project already there
+    finally:
+        if old is None:
+            os.environ.pop("RECOMPLAUNCHER")
+        else:
+            os.environ["RECOMPLAUNCHER"] = old
+    check(code == 0 and calls == ["toolchain"], calls)
+
+
+def test_build_key_does_not_depend_on_the_folder(d):
+    keys = []
+    for name in ("one", "two place"):
+        root = os.path.join(d, name)
+        for sub, f in (("bmx2recomp/runtime", "main.c"), ("work/gen", "code.c"), ("work/gen_iop", "iop.c"),
+                       ("work/gen_vu", "vu.h")):
+            os.makedirs(os.path.join(root, sub), exist_ok=True)
+            with open(os.path.join(root, sub, f), "w") as fh:
+                fh.write("int x;\n")
+        keys.append(bl.build_key(bl.Paths(root)))
+    check(keys[0] == keys[1], "build_key changed with the folder")
 
 
 def test_an_unexpected_error_does_not_escape(d):
