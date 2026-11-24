@@ -219,6 +219,152 @@ def test_image_reads_subfolders(d):
         im.close()
 
 
+class _Stubs:
+    """Replace launcher functions for one test; put them back after."""
+    def __init__(self, **fns):
+        self.fns, self.old = fns, {}
+
+    def __enter__(self):
+        for k, v in self.fns.items():
+            self.old[k] = getattr(bl, k)
+            setattr(bl, k, v)
+        return self
+
+    def __exit__(self, *exc):
+        for k, v in self.old.items():
+            setattr(bl, k, v)
+
+
+class _FakeConfig:
+    def __init__(self, **d):
+        self.d = d
+
+    def get(self, k, default=None):
+        return self.d.get(k, default)
+
+
+def _prepare(accept, **stubs):
+    """Run prepare with stubs; (exit code, printed lines, the calls the stubs saw)."""
+    import io
+    calls = []
+    base = dict(toolchain_ok=lambda P: True, project_ok=lambda P: True, generated_ok=lambda P, C, d: True,
+                built_ok=lambda P, C: True, release_tag=lambda: None,
+                install_toolchain=lambda P, log: calls.append("toolchain"),
+                install_project=lambda P, C, log, force=False, want=None: calls.append(("project", want)),
+                generate=lambda P, C, disc, log: calls.append("generate"),
+                compile_game=lambda P, C, log, progress=None: (calls.append("compile"), log("linking"), progress(1, 1)))
+    base.update(stubs)
+    out, real = io.StringIO(), sys.stdout
+    sys.stdout = out
+    try:
+        with _Stubs(**base):
+            code = bl.prepare(None, _FakeConfig(disc="game.cue"), accept, lambda s: print(s))
+    finally:
+        sys.stdout = real
+    return code, out.getvalue().splitlines(), calls
+
+
+def test_prepare_needs_the_downloads_allowed(d):
+    code, lines, calls = _prepare(False, toolchain_ok=lambda P: False)
+    check(code == 3 and calls == [], (code, calls))
+    check(any("--accept-downloads" in l for l in lines), lines)
+
+
+def test_prepare_already_built(d):
+    code, lines, calls = _prepare(False)
+    check(code == 0 and lines[-1] == "progress 1.000 Already built" and calls == [], (code, lines, calls))
+
+
+def test_prepare_builds_its_release_version(d):
+    code, lines, calls = _prepare(True, release_tag=lambda: "v1.2.3", built_ok=lambda P, C: False)
+    check(code == 0 and calls == [("project", "v1.2.3"), "generate", "compile"], calls)
+    check("progress 0.970 Linking" in lines and lines[-1] == "progress 1.000 Ready to play", lines)
+    check(all(0 <= float(l.split()[1]) <= 1 for l in lines if l.startswith("progress ")), lines)
+
+
+def test_prepare_wants_downloads_for_a_new_release(d):
+    code, lines, calls = _prepare(False, release_tag=lambda: "v1.2.3", is_working_copy=lambda P: False)
+    check(code == 3 and calls == [] and any("v1.2.3" in l for l in lines), (code, lines, calls))
+
+
+def test_prepare_keeps_the_project_under_recomplauncher(d):
+    old = os.environ.get("RECOMPLAUNCHER")
+    os.environ["RECOMPLAUNCHER"] = "1"
+    try:
+        code, _lines, calls = _prepare(True)     # no release version packed in
+    finally:
+        if old is None:
+            os.environ.pop("RECOMPLAUNCHER")
+        else:
+            os.environ["RECOMPLAUNCHER"] = old
+    check(code == 0 and calls == [], calls)
+
+
+def test_release_tag_reads_only_a_plain_version(d):
+    old = getattr(sys, "_MEIPASS", None)
+    sys._MEIPASS = d
+    old_frozen, bl.FROZEN = bl.FROZEN, True
+    try:
+        for text, want in (("v0.2.0\n", "v0.2.0"), ("v1\n", "v1"), ("v0.2.0-beta1\n", None), ("\n", None)):
+            with open(os.path.join(d, "release_tag.txt"), "w") as f:
+                f.write(text)
+            check(bl.release_tag() == want, (text, bl.release_tag()))
+        bl.FROZEN = False
+        check(bl.release_tag() is None, "run from source: no pin")
+    finally:
+        bl.FROZEN = old_frozen
+        if old is None:
+            del sys._MEIPASS
+        else:
+            sys._MEIPASS = old
+
+
+def test_parse_args_both_disc_forms(d):
+    check(bl.parse_args(["--root", "R", "--disc=a b.cue", "run", "--frames", "600"]) ==
+          ("R", "a b.cue", False, ["run", "--frames", "600"]), "disc= form")
+    check(bl.parse_args(["--disc", "x.iso", "--accept-downloads", "prepare"]) == (None, "x.iso", True, ["prepare"]),
+          "disc FILE form")
+
+
+def test_run_passes_the_words_after_it(d):
+    seen = {}
+
+    def fake_play(P, C, log, wait=False, extra=()):
+        seen.update(wait=wait, extra=list(extra))
+        return 7
+    with _Stubs(open_session=lambda root, disc: (None, _FakeConfig()), play=fake_play):
+        code = bl.cli(["--disc=x.cue", "run", "--frames", "600"])
+    check(code == 7 and seen == {"wait": True, "extra": ["--frames", "600"]}, (code, seen))
+
+
+def test_no_command_uses_recomplauncher_data(d):
+    """Easy Setup skipped: no --root, but RECOMPLAUNCHER_DATA names the folder with the build."""
+    seen = {}
+    keep = {k: os.environ.get(k) for k in ("RECOMPLAUNCHER_DATA", "RECOMPLAUNCHER")}
+    os.environ["RECOMPLAUNCHER_DATA"], os.environ["RECOMPLAUNCHER"] = d, "1"
+
+    def fake_play(P, C, log, wait=False, extra=()):
+        seen.update(root=P.root, wait=wait, extra=list(extra))
+        return 0
+    try:
+        with _Stubs(adopt_disc=lambda P, C: False, ready_to_play=lambda P, C: True, play=fake_play):
+            code = bl.main(["--fast"])
+    finally:
+        for k, v in keep.items():
+            if v is None:
+                os.environ.pop(k, None)
+            else:
+                os.environ[k] = v
+    check(code == 0 and seen == {"root": os.path.abspath(d), "wait": True, "extra": ["--fast"]}, (code, seen))
+
+
+def test_an_unexpected_error_does_not_escape(d):
+    def boom(argv):
+        raise TypeError("odd data")
+    with _Stubs(main=boom):
+        check(bl.guarded_main([]) == 1, "guarded_main did not return 1")
+
+
 def main():
     tests = [v for k, v in sorted(globals().items()) if k.startswith("test_")]
     failed = 0

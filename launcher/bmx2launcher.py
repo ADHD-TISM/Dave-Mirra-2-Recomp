@@ -120,7 +120,7 @@ class Paths:
 class Config:
     def __init__(self, path):
         self.path = path
-        self.lock = threading.RLock()   # the worker thread and the window both save
+        self.lock = threading.RLock()   # compile_game's threads and the main thread both save
         try:
             with open(path, encoding="utf-8") as f:
                 self.d = json.load(f)
@@ -378,6 +378,8 @@ def fetch_project_zip(P, tag, log):
 
 def release_tag():
     """The project version a packaged release was made with (launcher/release.sh packs it in), or None."""
+    if not FROZEN:      # run from source: the project is whatever is installed or downloaded
+        return None
     try:
         with open(os.path.join(getattr(sys, "_MEIPASS", ""), "release_tag.txt"), encoding="ascii") as f:
             tag = f.read().strip()
@@ -756,6 +758,7 @@ def _resources(P):
 def build_key(P):
     src, hdr = _sources(P)
     h = hashlib.sha256(b"build1")
+    h.update(repr((LINK, LLVM_NAME)).encode())   # the link recipe and compiler (each object's own key has its flags)
     for p in hdr + src + _resources(P):
         h.update(os.path.basename(p).encode())
         h.update(file_bytes(p))
@@ -847,15 +850,16 @@ def compile_game(P, C, log, progress=None):
     os.makedirs(P.game, exist_ok=True)
     tmp = P.exe + ".new"
     run([P.clang] + objs + ["-o", tmp] + LINK, log, cwd=P.root, env=env)
+    # bmx2.exe goes in last: it is the file RecompLauncher takes as "built" (recomplauncher.json prepare.done)
+    shutil.copyfile(os.path.join(P.discfiles, GAME_EXE), os.path.join(P.game, GAME_EXE))   # the runtime loads it at start
+    if not os.path.isfile(P.ini):
+        with open(P.ini, "w", encoding="utf-8", newline="\n") as f:
+            f.write(default_ini_text())
     try:
         os.replace(tmp, P.exe)
     except OSError:
         os.remove(tmp)
         raise Fail("%s is in use: close the game and build again" % EXE_FILE)
-    shutil.copyfile(os.path.join(P.discfiles, GAME_EXE), os.path.join(P.game, GAME_EXE))   # the runtime loads it at start
-    if not os.path.isfile(P.ini):
-        with open(P.ini, "w", encoding="utf-8", newline="\n") as f:
-            f.write(default_ini_text())
     C.set("build_key", build_key(P))
     log("game built: %s" % P.exe)
 
@@ -920,7 +924,6 @@ KEYS = [("up", "up"), ("down", "down"), ("left", "left"), ("right", "right"), ("
         ("rstick_up", "num8"), ("rstick_down", "num2"), ("rstick_left", "num4"), ("rstick_right", "num6")]
 for _n, _d in KEYS:
     SETTINGS.append(("key_" + _n, "Input", "Key: " + _n.replace("_", " ").upper(), "key", None, _d, None))
-SCHEMA = {s[0]: s for s in SETTINGS}
 
 
 def default_ini_text():
@@ -935,66 +938,6 @@ def default_ini_text():
     return "\n".join(out) + "\n"
 
 
-_INI_LINE = re.compile(r"^\s*([A-Za-z0-9_]+)\s*=\s*(.*?)\s*$")
-
-
-def read_ini(path):
-    """Settings in the file (name -> value); the defaults for anything missing."""
-    vals = {s[0]: s[5] for s in SETTINGS}
-    try:
-        with open(path, encoding="utf-8", errors="replace") as f:
-            for line in f:
-                s = line.strip()
-                if not s or s[0] in "#;":
-                    continue
-                m = _INI_LINE.match(line)
-                if m:
-                    vals[m.group(1).lower()] = m.group(2)
-    except OSError:
-        pass
-    return vals
-
-
-def valid_setting(key, val):
-    s = SCHEMA.get(key)
-    if not s:
-        return True
-    if s[3] in ("choice", "bool"):
-        return val.lower() in [c.lower() for c in s[4]]
-    if s[3] == "combo":
-        m = re.fullmatch(r"(\d{3,5})x(\d{3,5})", val)
-        return val.lower() == s[5] or bool(m and 320 <= int(m.group(1)) <= 16384 and 240 <= int(m.group(2)) <= 16384)
-    parts = [p.strip() for p in val.split(",")]
-    if not 1 <= len(parts) <= 2:
-        return False
-    return all((len(p) == 1 and p.isalnum() and p.isascii()) or p.lower() in KEYNAMES for p in parts)
-
-
-def write_ini(path, values):
-    """Write values into the file, keeping its comments, order and unknown lines."""
-    try:
-        with open(path, encoding="utf-8", errors="replace") as f:
-            lines = f.read().splitlines()
-    except OSError:
-        lines = default_ini_text().splitlines()
-    todo = dict(values)
-    out = []
-    for line in lines:
-        m = _INI_LINE.match(line)
-        if m and not line.lstrip().startswith(("#", ";")) and m.group(1).lower() in todo:
-            k = m.group(1).lower()
-            out.append("%s = %s" % (m.group(1), todo.pop(k)))
-        else:
-            out.append(line)
-    for k, v in todo.items():
-        out.append("%s = %s" % (k, v))
-    os.makedirs(os.path.dirname(path), exist_ok=True)
-    tmp = path + ".tmp"
-    with open(tmp, "w", encoding="utf-8", newline="\n") as f:
-        f.write("\n".join(out) + "\n")
-    os.replace(tmp, path)
-
-
 # ---------------------------------------------------------------- play
 
 def play(P, C, log, wait=False, extra=()):
@@ -1006,13 +949,75 @@ def play(P, C, log, wait=False, extra=()):
         raise Fail("no game image chosen (--disc=FILE)")
     image = resolve_image(disc)
     args = [P.exe, "--image", os.path.abspath(image)] + list(extra) + [P.game]
+    for n in (2, 1):        # keep the logs of the last 3 runs: bmx2.log, bmx2.1.log, bmx2.2.log
+        older = os.path.join(P.game, "bmx2.%d.log" % n)
+        newer = os.path.join(P.game, "bmx2.log" if n == 1 else "bmx2.%d.log" % (n - 1))
+        try:
+            if os.path.isfile(newer):
+                os.replace(newer, older)
+        except OSError:
+            pass
     logf = open(os.path.join(P.game, "bmx2.log"), "w")    # what the game prints, for when something goes wrong
     try:
         proc = subprocess.Popen(args, cwd=P.game, creationflags=NO_WINDOW, stdout=logf, stderr=subprocess.STDOUT)
     finally:
         logf.close()
     log("started the game (its messages go to %s)" % os.path.join(P.game, "bmx2.log"))
-    return proc.wait() if wait else 0
+    if not wait:
+        return 0
+    job = end_with_us(proc)   # kept open while waiting: when this program is ended, Windows ends the game too
+    try:
+        return proc.wait()
+    finally:
+        if job:
+            import ctypes
+            ctypes.windll.kernel32.CloseHandle(job)
+
+
+def end_with_us(proc):
+    """Put proc in a job that Windows closes, ending proc, when this program ends (RecompLauncher stops the program
+    it started, which is this one). Returns the job handle, or None when that is not possible."""
+    try:
+        import ctypes
+        from ctypes import wintypes
+        k32 = ctypes.windll.kernel32
+        k32.CreateJobObjectW.restype = wintypes.HANDLE
+        k32.OpenProcess.restype = wintypes.HANDLE
+        k32.SetInformationJobObject.argtypes = [wintypes.HANDLE, ctypes.c_int, ctypes.c_void_p, wintypes.DWORD]
+        k32.AssignProcessToJobObject.argtypes = [wintypes.HANDLE, wintypes.HANDLE]
+        k32.CloseHandle.argtypes = [wintypes.HANDLE]
+
+        class Basic(ctypes.Structure):
+            _fields_ = [("PerProcessUserTimeLimit", ctypes.c_int64), ("PerJobUserTimeLimit", ctypes.c_int64),
+                        ("LimitFlags", wintypes.DWORD), ("MinimumWorkingSetSize", ctypes.c_size_t),
+                        ("MaximumWorkingSetSize", ctypes.c_size_t), ("ActiveProcessLimit", wintypes.DWORD),
+                        ("Affinity", ctypes.c_size_t), ("PriorityClass", wintypes.DWORD),
+                        ("SchedulingClass", wintypes.DWORD)]
+
+        class Io(ctypes.Structure):
+            _fields_ = [(n, ctypes.c_uint64) for n in ("ReadOps", "WriteOps", "OtherOps", "ReadBytes", "WriteBytes",
+                                                       "OtherBytes")]
+
+        class Extended(ctypes.Structure):
+            _fields_ = [("Basic", Basic), ("Io", Io), ("ProcessMemoryLimit", ctypes.c_size_t),
+                        ("JobMemoryLimit", ctypes.c_size_t), ("PeakProcessMemoryUsed", ctypes.c_size_t),
+                        ("PeakJobMemoryUsed", ctypes.c_size_t)]
+        job = k32.CreateJobObjectW(None, None)
+        if not job:
+            return None
+        info = Extended()
+        info.Basic.LimitFlags = 0x2000   # JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE
+        h = k32.OpenProcess(0x0101, False, proc.pid)   # PROCESS_SET_QUOTA | PROCESS_TERMINATE
+        ok = (h and k32.SetInformationJobObject(job, 9, ctypes.byref(info), ctypes.sizeof(info))   # extended limits
+              and k32.AssignProcessToJobObject(job, h))
+        if h:
+            k32.CloseHandle(h)
+        if not ok:
+            k32.CloseHandle(job)
+            return None
+        return job
+    except (OSError, AttributeError, ImportError):
+        return None
 
 
 # ---------------------------------------------------------------- status
@@ -1044,7 +1049,9 @@ def ready_to_play(P, C):
 # ---------------------------------------------------------------- command line
 
 def open_session(root, disc=None):
-    P = Paths(root or default_root())
+    # RecompLauncher gives its data folder as RECOMPLAUNCHER_DATA too, also when the player skipped Easy Setup and
+    # this program starts with no arguments: the build is there, not next to the program
+    P = Paths(root or os.environ.get("RECOMPLAUNCHER_DATA") or default_root())
     C = Config(P.cfg)
     if disc:
         check_disc(C, disc)
@@ -1070,25 +1077,49 @@ def prepare(P, C, accept, log):
                   flush=True)
             return 3
         say(0.01, "Downloading the C compiler")
-        install_toolchain(P, log)
+
+        def download_log(s):   # fetch logs "  compiler: 40% of 190.0 MB": show it on the setup screen too
+            m = re.match(r"\s*(compiler|python): (\d+)% of", s)
+            if m:
+                say(0.01 + 0.18 * int(m.group(2)) / 100, "Downloading the %s (%s%%)"
+                    % ("C compiler" if m.group(1) == "compiler" else "Python", m.group(2)))
+            log(s)
+        install_toolchain(P, download_log)
         say(0.2, "Downloading the project")
         install_project(P, C, log, want=release_tag())
+    elif not accept and release_tag() and release_tag() != C.get("tag") and not is_working_copy(P):
+        print("this release needs project version %s (installed: %s), and --accept-downloads was not given"
+              % (release_tag(), C.get("tag", "none")), flush=True)
+        return 3
     elif accept:   # a packaged release builds its own project version, also when the player goes back to an older one
         want = release_tag()
-        say(0.2, ("Getting project version %s" % want) if want else "Checking for a newer project version")
-        install_project(P, C, log, want=want)
+        if want:
+            say(0.2, "Getting project version %s" % want)
+            install_project(P, C, log, want=want)
+        elif os.environ.get("RECOMPLAUNCHER") == "1":
+            log("no release version packed in; RecompLauncher brings the releases, so the project stays as it is")
+        else:
+            say(0.2, "Checking for a newer project version")
+            install_project(P, C, log)
     if generated_ok(P, C, disc) and built_ok(P, C):
         say(1, "Already built")
         return 0
     say(0.25, "Translating the game's code from your disc")
     generate(P, C, disc, log)
     say(0.4, "Building the game")
-    compile_game(P, C, log, lambda d, n: say(0.4 + 0.6 * d / max(n, 1), "Building the game (%d of %d files)" % (d, n)))
+
+    def build_log(s):
+        if s == "linking":
+            say(0.97, "Linking")
+        log(s)
+    compile_game(P, C, build_log,
+                 lambda d, n: say(0.4 + 0.55 * d / max(n, 1), "Building the game (%d of %d files)" % (d, n)))
     say(1, "Ready to play")
     return 0
 
 
-def cli(argv):
+def parse_args(argv):
+    """(root, disc, accept_downloads, the command and its words) from the command line."""
     root, disc, cmd, accept = None, None, [], False
     it = iter(argv)
     for a in it:
@@ -1102,6 +1133,11 @@ def cli(argv):
             accept = True
         else:
             cmd.append(a)
+    return root, disc, accept, cmd
+
+
+def cli(argv):
+    root, disc, accept, cmd = parse_args(argv)
     try:
         P, C = open_session(root, disc)
     except (Fail, OSError) as e:
@@ -1182,14 +1218,17 @@ def main(argv):
         return cli(argv)
     # no command (a double click, or RecompLauncher with Easy Setup skipped): start the game when it is built
     try:
-        disc = next((a[len("--disc="):] for a in argv if a.startswith("--disc=")), None)
-        root = argv[argv.index("--root") + 1] if "--root" in argv and argv.index("--root") + 1 < len(argv) else None
+        root, disc, _accept, _words = parse_args(argv)
         P, C = open_session(root, disc)
         if ready_to_play(P, C):
-            return play(P, C, lambda s: print(s, flush=True), wait=True)
-        message = ("The game is not set up yet. Install it with RecompLauncher (recomplauncher.com), "
-                   "which builds it from your own disc, or run this program with "
-                   "--disc=<your disc image> prepare --accept-downloads.")
+            return play(P, C, lambda s: print(s, flush=True), wait=True, extra=_words)   # the player's launch options
+        if os.environ.get("RECOMPLAUNCHER") == "1":
+            message = ("The game is not set up yet. Turn Easy Setup back on for it in RecompLauncher, pick your "
+                       "disc image there and let it build the game.")
+        else:
+            message = ("The game is not set up yet. Install it with RecompLauncher (recomplauncher.com), "
+                       "which builds it from your own disc, or run this program with "
+                       "--disc=<your disc image> prepare --accept-downloads.")
     except (Fail, OSError) as e:
         message = "%s cannot start: %s" % (GAME_NAME, e)
     print(message, flush=True)
@@ -1197,5 +1236,18 @@ def main(argv):
     return 1
 
 
+def guarded_main(argv):
+    """main, but nothing escapes: in the packaged program an uncaught error would open a dialog and hold up
+    RecompLauncher's windowless setup step until it gives up on it."""
+    try:
+        return main(argv)
+    except Exception as e:      # the last stop: say what happened where it can be seen, then fail
+        try:
+            print("error: %s: %s" % (type(e).__name__, e), flush=True)
+        except Exception:
+            pass
+        return 1
+
+
 if __name__ == "__main__":
-    sys.exit(main(sys.argv[1:]))
+    sys.exit(guarded_main(sys.argv[1:]))
