@@ -1403,9 +1403,9 @@ static void present_rect_(u32 fbp, u32 fbw, u32 psm, u32 dbx, u32 dby, u32 w, u3
  * interval refresh/60 and let SwapBuffers line frames up with the scan-out
  * (pace() in kernel.c then times 60.00 Hz instead of 59.94). Other refresh
  * rates, a hidden window, turbo, NO_VSYNC=1, or a monitor driven by another
- * graphics chip than the renderer (display_on_other_chip) keep the timer
- * pacing with vsync off. Checked again every 120
- * presents, so moving the window to another monitor switches mode. */
+ * graphics chip than the renderer (display_on_other_chip, unless
+ * vsync_two_chip = 1) keep the timer pacing with vsync off. Checked again
+ * every 120 presents, so moving the window to another monitor switches mode. */
 static int display_hz(void) {
     HMONITOR m = MonitorFromWindow(wnd, MONITOR_DEFAULTTONEAREST);
     MONITORINFOEXA mi; mi.cbSize = sizeof mi;
@@ -1427,7 +1427,9 @@ static int gl_vendor;   /* of the context's renderer, set at start-up */
  * rendering (a two-chip laptop: NVIDIA draws, the Intel chip drives the panel).
  * The picture is then copied between the chips, and the driver's vsync on that
  * path returned unevenly: on a GTX 1050 Ti + UHD 630 laptop, 52 of 940 riding
- * frames reached the screen over 20 ms apart with vsync and 3 without. */
+ * frames reached the screen over 20 ms apart with vsync and 3 without.
+ * Without vsync the picture tears, most visibly in fullscreen; the setting
+ * vsync_two_chip = 1 keeps vsync for players who prefer the stutter. */
 static int display_on_other_chip(void) {
     HMONITOR m = MonitorFromWindow(wnd, MONITOR_DEFAULTTONEAREST);
     MONITORINFOEXA mi; mi.cbSize = sizeof mi;
@@ -1442,14 +1444,16 @@ static void choose_vsync(void) {
     if (env_off < 0) env_off = getenv("NO_VSYNC") != 0;
     int no_vsync = env_off || !g_cfg.vsync;   /* g_cfg.vsync: the in-game menu may change it */
     int want = 0, hz = shown ? display_hz() : 0, other = 0;
-    if (shown && !g_turbo && !no_vsync && swap_interval_fn && !(other = display_on_other_chip()))
+    if (shown && !g_turbo && !no_vsync && swap_interval_fn &&
+        (!(other = display_on_other_chip()) || g_cfg.vsync_two_chip))
         for (int k = 1; k <= 4; k++) if (hz >= 59 * k && hz <= 61 * k) { want = k; break; }
     static int last_other;
     if (want != vsync_interval || other != last_other) {
         if (want != vsync_interval) swap_interval_fn(want);
         vsync_interval = want; last_other = other;
         LOG("gs: %s (display %d Hz%s)\n", want ? "frames paced by vsync" : "vsync off, timer pacing", hz,
-            other ? ", driven by another graphics chip" : "");
+            !other ? "" : want ? ", driven by another graphics chip; vsync_two_chip = 1"
+                               : ", driven by another graphics chip");
     }
 }
 int gsgl_vsync_paced(void) { return vsync_interval > 0; }

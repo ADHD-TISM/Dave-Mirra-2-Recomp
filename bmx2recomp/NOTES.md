@@ -23,8 +23,9 @@ v0.1.7 (full release, Latest, tag at 89a8dcb) makes two-chip laptops run on
 the dedicated chip and pace frames evenly (see "Two-chip laptops"); v0.1.6
 added the in-game menu (see "In-game menu"); v0.1.4 and v0.1.5 made the
 graphics pipeline fast enough that the user sees no stutter with other
-programs running (see "Stutter under CPU load"). Next: the user watches a
-ride on the laptop (smoothness, tearing in fullscreen), then playtest (see
+programs running (see "Stutter under CPU load"). After v0.1.7: the user saw
+tearing on the laptop in fullscreen, so the setting vsync_two_chip lets
+players keep vsync there (not yet released). Next: playtest (see
 "Next step"). The State sections below are older snapshots, kept for history.
 
 ## Two-chip laptops (2026-11-23)
@@ -50,9 +51,17 @@ alone there is no display), deleted after.
   "vsync off, timer pacing (display 60 Hz, driven by another graphics chip)".
   Laptop after: 3 gaps windowed and fullscreen; desktop (RX 7900 XTX on the
   Dell) unchanged, vsync, 0 gaps.
+- Fullscreen, scale 4, watched by the user: timer pacing tears (6 riding
+  gaps over 20 ms, longest 51.7 ms); vsync forced on does not tear but has
+  61-64 riding gaps (6577 swap waits over 8 ms). Setting vsync_two_chip
+  (bmx2.ini, launcher Settings > Video, default 0) keeps vsync on such a
+  laptop; the log line then ends "driven by another graphics chip;
+  vsync_two_chip = 1". Not in the in-game menu.
+- Smart App Control on the laptop blocked a fresh unsigned bmx2.exe once
+  (CodeIntegrity event 3118); earlier builds that day ran. The user turned
+  it off there. Players with it on may hit the same block.
 - Not covered: two chips from one vendor (AMD + AMD, Intel Arc + Iris Xe)
-  keep vsync; there is no setting to force vsync back on (gatekeeper
-  suggestion); tearing in fullscreen with interval 0 is not checked by eye.
+  keep vsync.
 - One long frame at the level load (frame ~5209: 88 ms laptop, 366 ms
   desktop after a rebuild), not looked into.
 
@@ -282,10 +291,9 @@ frames 125 -> 40. No audio underruns in the level either way.
 - Vsync (gs_gl.c choose_vsync): at a 60/120/180/240 Hz monitor the swap
   interval is refresh/60 and the timer paces 60.00 Hz instead of 59.94 (the
   swap alone does not hold the rate: in a window the compositor followed the
-  120 Hz primary). Off: `vsync = 0` in bmx2.ini or NO_VSYNC=1, and always
-  when the window's monitor is driven by another graphics chip than the
-  renderer (see "Two-chip laptops"). Audio: the
-  waveOut thread skips 1 frame in 256 while more than ~64 ms is queued
+  120 Hz primary). Off: `vsync = 0` in bmx2.ini or NO_VSYNC=1, and when
+  the window's monitor is driven by another graphics chip than the renderer
+  unless `vsync_two_chip = 1` (see "Two-chip laptops"). Audio: the waveOut thread skips 1 frame in 256 while more than ~64 ms is queued
   (exit line "frames dropped for drift").
 - Graphics thread (runtime/gsthread.c): VIF1, VU1, the GS front end and all
   GL run on a worker. The EE copies VIF1 DMA data and GIF path 3 data into a

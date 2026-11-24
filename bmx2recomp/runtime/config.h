@@ -18,6 +18,7 @@ typedef struct {
     int smooth;             /* 1 = linear filter when enlarging, 0 = nearest */
     int frame_limit;        /* 0 = run as fast as possible */
     int vsync;              /* 1 = present in step with a 60/120 Hz display (gs_gl.c choose_vsync) */
+    int vsync_two_chip;     /* 1 = keep vsync when another graphics chip drives the monitor (no tearing, uneven frames) */
     int gamepad;            /* 0 = ignore XInput pads */
     int rumble;             /* 1 = gamepad vibration when the game asks for it */
     int pad2;               /* player 2 (port 2): 0 off, 1 second XInput pad, 2 first XInput pad (keyboard stays player 1) */

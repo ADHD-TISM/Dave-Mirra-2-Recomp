@@ -834,6 +834,8 @@ SETTINGS = [
      "Window size in pixels (WxH). auto = 1280x960 (1280x720 with widescreen), made smaller if the screen is"),
     ("vsync", "Video", "Vertical sync", "bool", B01, "1",
      "1 = show frames in step with a 60 or 120 Hz screen (smoother); 0 = timer only"),
+    ("vsync_two_chip", "Video", "Vertical sync on two-chip laptops", "bool", B01, "0",
+     "When another graphics chip drives the screen (most laptops with two chips): 0 = timer only (smooth, may tear), 1 = vertical sync (no tearing, may stutter). Needs Vertical sync on"),
     ("fullscreen", "Video", "Start in fullscreen", "bool", B01, "0",
      "1 = start in borderless fullscreen (F11 or Alt+Enter toggles while playing)"),
     ("widescreen", "Video", "Widescreen (16:9)", "bool", B01, "0",

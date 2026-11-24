@@ -95,10 +95,13 @@ The memory card is the folder `game\memcard\mc0`. Back it up to keep your saves.
   Most laptops with two graphics chips from different makers (NVIDIA or AMD
   plus Intel, or NVIDIA plus AMD) run the game on the dedicated chip, and
   with vsync on the game paces frames with its own timer instead;
-  `game\bmx2.log` then says "driven by another graphics chip". The log line
-  `gs: OpenGL ... (<chip>)` names the chip in use. If it names the
-  integrated chip, open Windows Settings > System > Display > Graphics, add
-  `game\bmx2.exe` (Browse) and set it to High performance.
+  `game\bmx2.log` then says "driven by another graphics chip". The picture
+  may tear. If you mind the tearing more than stutter, turn on the launcher's
+  **Settings > Video > Vertical sync on two-chip laptops**
+  (`vsync_two_chip = 1`). The log line `gs: OpenGL ... (<chip>)` names the
+  chip in use. If it names the integrated chip, open Windows Settings >
+  System > Display > Graphics, add `game\bmx2.exe` (Browse) and set it to
+  High performance.
 
 ## Building from source (developers)
 
