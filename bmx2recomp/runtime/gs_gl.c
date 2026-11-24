@@ -1492,6 +1492,7 @@ int gsgl_init(int show_window, int scale) {
     WNDCLASSA wc = { 0 };
     wc.lpfnWndProc = wndproc; wc.hInstance = GetModuleHandleA(NULL);
     wc.lpszClassName = "bmx2recomp"; wc.hCursor = LoadCursor(NULL, IDC_ARROW); wc.style = CS_OWNDC;
+    wc.hIcon = LoadIconA(wc.hInstance, MAKEINTRESOURCEA(1));   /* runtime/bmx2.rc; NULL in a build without it */
     RegisterClassA(&wc);
     RECT r = { 0, 0, g_cfg.window_w ? g_cfg.window_w : 1280, g_cfg.window_h ? g_cfg.window_h : (g_cfg.widescreen ? 720 : 960) };
     AdjustWindowRect(&r, WS_OVERLAPPEDWINDOW, FALSE);

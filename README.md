@@ -111,7 +111,9 @@ The launcher does all of this for you. To work on the code directly:
   the game's main CPU, sound/disc CPU and VU1 programs to C.
 - `bmx2recomp/runtime/` is the hardware runtime: GS on OpenGL, VIF/VU, IPU
   movies, SPU2 sound, pad, memory card, kernel.
-- `bmx2recomp/build.sh` builds `bmx2.exe` with clang.
+- `bmx2recomp/build.sh` builds `bmx2.exe` with clang. Its icon comes from the
+  game's memory card icon on your disc (`tools/make_icon.py`, built into the
+  exe with `runtime/bmx2.rc`), so no game art is in this repository.
 - `bmx2recomp/NOTES.md` holds the research notes and the current state.
 - The launcher's own source is `launcher/bmx2launcher.py`
   (`python launcher/bmx2launcher.py --help`).

@@ -16,17 +16,35 @@ xref search). Names come from `tools/names.txt`; add confirmed ones there.
 `tools/dis.py` needs capstone (not installed) and REA cannot analyse MIPS ELFs
 on Windows, so use eedis.py. Workflow summary: skill `ps2-static-recomp`.
 
-## State (2026-11-23): v0.1.7 published, playable
+## State (2026-11-23): v0.1.8 published, playable
 Every level loads and rides, sound plays, memory card saves work, player 2,
 vibration, widescreen, scale 1-4x, launcher with Download / Update / Build.
-v0.1.7 (full release, Latest, tag at 89a8dcb) makes two-chip laptops run on
-the dedicated chip and pace frames evenly (see "Two-chip laptops"); v0.1.6
-added the in-game menu (see "In-game menu"); v0.1.4 and v0.1.5 made the
-graphics pipeline fast enough that the user sees no stutter with other
-programs running (see "Stutter under CPU load"). After v0.1.7: the user saw
-tearing on the laptop in fullscreen, so the setting vsync_two_chip lets
-players keep vsync there (not yet released). Next: playtest (see
-"Next step"). The State sections below are older snapshots, kept for history.
+v0.1.8 (full release, Latest, tag at 36ef133, launcher 7) adds the setting
+vsync_two_chip; v0.1.7 made two-chip laptops run on the dedicated chip and
+pace frames evenly (see "Two-chip laptops"); v0.1.6 added the in-game menu
+(see "In-game menu"); v0.1.4 and v0.1.5 made the graphics pipeline fast
+enough that the user sees no stutter with other programs running (see
+"Stutter under CPU load"). Open: the laptop still tears (see "Two-chip
+laptops"). After v0.1.8: bmx2.exe gets the game's icon and name (see "Exe
+icon and name"). Next: playtest (see "Next step"). The State sections below
+are older snapshots, kept for history.
+
+## Exe icon and name (2026-11-23)
+- The disc's ASSETS/ICON.DAT (the memory card icon, the same bytes as the
+  save's bmxicon.ico) is a PS2 icon: header 0x00010000, 1 shape, texture
+  type 7 (uncompressed), 36 vertices, and a 128x128 A1B5G5R5 texture in the
+  last 32768 bytes, which is the "Dave Mirra 2 freestyle bmx" logo tile.
+- tools/make_icon.py turns that texture into a .ico (16-128 px, 32-bit);
+  runtime/bmx2.rc puts it into bmx2.exe with a version block (ProductName and
+  FileDescription "Dave Mirra Freestyle BMX 2"); gs_gl.c loads it as the
+  window icon. The icon comes from the player's disc at build time
+  (build.sh: from ../disc; launcher: generate() reads ASSETS/ICON.DAT, which
+  needed subfolder reading in Image.read) and is never committed.
+- Launcher 8: window title "Dave Mirra Freestyle BMX 2 launcher", and the
+  window takes gen/bmx2.ico once the game is built. The launcher exe's own
+  file icon stays PyInstaller's default: it is a public download, so it
+  cannot carry game art. A project without make_icon.py and bmx2.rc (v0.1.8
+  or older) still builds, without the icon.
 
 ## Two-chip laptops (2026-11-23)
 Test laptop (reached over SSH): i5-9300H 4 cores / 8 threads, GTX 1050 Ti +
@@ -62,6 +80,15 @@ alone there is no display), deleted after.
   it off there. Players with it on may hit the same block.
 - Not covered: two chips from one vendor (AMD + AMD, Intel Arc + Iris Xe)
   keep vsync.
+- Still open after v0.1.8: the user saw tearing with vsync_two_chip = 1 in
+  fullscreen and with timer pacing in a window (3 riding gaps), so neither
+  vsync nor desktop composition stops it. A test build without the NVIDIA
+  request still ran on the GTX 1050 Ti (the driver chose it; no Windows
+  graphics preference was set for that exe), so the Intel-only comparison
+  has not run. Ideas: run on the chip that drives the panel (Windows
+  graphics preference Power saving), present through DXGI (WGL_NV_DX_interop
+  and a flip-model swap chain), or check whether the desktop tears too
+  (then it is the game's own drawing, not the chip copy).
 - One long frame at the level load (frame ~5209: 88 ms laptop, 366 ms
   desktop after a rebuild), not looked into.
 

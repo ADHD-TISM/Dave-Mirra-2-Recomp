@@ -39,7 +39,7 @@ from concurrent.futures import ThreadPoolExecutor
 # The project's online home (GitHub "owner/name"). Empty while it is not published:
 # the launcher then uses the bmx2recomp folder next to it and Update says so.
 REPO = "ADHD-TISM/Dave-Mirra-2-Recomp"
-LAUNCHER_VERSION = "7"
+LAUNCHER_VERSION = "8"
 
 GAME_NAME = "Dave Mirra Freestyle BMX 2"
 GAME_SERIAL = "SLUS-20159"
@@ -488,14 +488,10 @@ class Image:
             return raw
         return raw[24:24 + 2048] if raw[15] == 2 else raw[16:16 + 2048]
 
-    def root(self):
-        """{NAME: (lba, size)} for the files in the root directory."""
-        pvd = self.sector(16)
-        if pvd[1:6] != b"CD001":
-            raise Fail("%s is not a game disc image (no ISO 9660 file system)" % os.path.basename(self.path))
-        lba, size = struct.unpack_from("<I", pvd, 158)[0], struct.unpack_from("<I", pvd, 166)[0]
+    def _dir(self, lba, size, dirs=False):
+        """{NAME: (lba, size)} for the files (or, with dirs, the subfolders) of one directory."""
         if not 0 < size <= 1 << 20:
-            raise Fail("%s: bad root directory" % os.path.basename(self.path))
+            raise Fail("%s: bad directory on the disc" % os.path.basename(self.path))
         data = b"".join(self.sector(lba + i) for i in range((size + 2047) // 2048))[:size]
         out, p = {}, 0
         while p + 34 < len(data):
@@ -505,13 +501,29 @@ class Image:
                 continue
             k = data[p + 32]
             name = data[p + 33:p + 33 + k].decode("ascii", "replace").split(";")[0]
-            if not data[p + 25] & 2:
+            if bool(data[p + 25] & 2) == dirs and name not in ("\0", "\1"):
                 out[name.upper()] = (struct.unpack_from("<I", data, p + 2)[0], struct.unpack_from("<I", data, p + 10)[0])
             p += n
         return out
 
+    def root(self, dirs=False):
+        """{NAME: (lba, size)} for the files in the root directory."""
+        pvd = self.sector(16)
+        if pvd[1:6] != b"CD001":
+            raise Fail("%s is not a game disc image (no ISO 9660 file system)" % os.path.basename(self.path))
+        return self._dir(struct.unpack_from("<I", pvd, 158)[0], struct.unpack_from("<I", pvd, 166)[0], dirs)
+
     def read(self, name):
-        ent = self.root().get(name.upper())
+        """A file by its path, e.g. SLUS_201.59 or ASSETS/ICON.DAT."""
+        parts = name.upper().split("/")
+        ent = None
+        if len(parts) == 1:
+            ent = self.root().get(parts[0])
+        else:
+            d = self.root(dirs=True).get(parts[0])
+            for sub in parts[1:-1]:
+                d = d and self._dir(d[0], d[1], dirs=True).get(sub)
+            ent = d and self._dir(d[0], d[1]).get(parts[-1])
         if not ent:
             raise Fail("%s is not on this disc: is it %s (%s)?" % (name, GAME_NAME, GAME_SERIAL))
         lba, size = ent
@@ -593,10 +605,20 @@ def adopt_disc(P, C):
 
 # ---------------------------------------------------------------- generate
 
+ICON_FILE = "ASSETS/ICON.DAT"     # the game's memory card icon: its texture becomes bmx2.exe's icon
+
+
+def icon_tool(P):
+    """tools/make_icon.py, or None in a project from before the icon (v0.1.8 and older)."""
+    p = os.path.join(P.project, "tools", "make_icon.py")
+    return p if os.path.isfile(p) else None
+
+
 def gen_inputs(P):
     pr = P.project
     return [os.path.join(pr, "tools", n) for n in ("recomp_ee.py", "recomp_iop.py", "recomp_vu.py")] + \
-           [os.path.join(pr, "extra_ee.txt"), os.path.join(pr, "vu_recipe.json")]
+           [os.path.join(pr, "extra_ee.txt"), os.path.join(pr, "vu_recipe.json")] + \
+           ([icon_tool(P)] if icon_tool(P) else [])
 
 
 def regen_key(P, disc):
@@ -608,6 +630,7 @@ def generated_ok(P, C, disc):
         return (bool(disc) and project_ok(P) and C.get("regen_key") == regen_key(P, disc)
                 and os.path.isfile(os.path.join(P.gen, "table.c"))
                 and os.path.isfile(os.path.join(P.gen_vu, "vu1_rec.h"))
+                and (not icon_tool(P) or os.path.isfile(os.path.join(P.gen, "bmx2.ico")))
                 and all(os.path.isfile(os.path.join(P.gen_iop, "iop_%s.c" % n)) for _f, n, _a in IOP_MODULES))
     except (Fail, OSError):
         return False
@@ -659,8 +682,15 @@ def generate(P, C, disc, log):
         for name in [GAME_EXE] + [f for f, _n, _a in IOP_MODULES]:
             with open(os.path.join(P.discfiles, name), "wb") as f:
                 f.write(im.read(name))
+        if icon_tool(P):
+            with open(os.path.join(P.discfiles, "ICON.DAT"), "wb") as f:
+                f.write(im.read(ICON_FILE))
     finally:
         im.close()
+    if icon_tool(P):
+        log("making the game's icon")
+        run([py, "-I", icon_tool(P), os.path.join(P.discfiles, "ICON.DAT"), os.path.join(P.gen, "bmx2.ico")],
+            log, cwd=P.project)
     elf = os.path.join(P.discfiles, GAME_EXE)
     log("translating the game code (EE, a few seconds)")
     run([py, "-I", os.path.join(tools, "recomp_ee.py"), elf, P.gen, "--extra", os.path.join(P.project, "extra_ee.txt")],
@@ -702,10 +732,16 @@ def _flags(P, src):
 LINK = ["-static", "-Wl,--stack,67108864", "-lwinmm", "-lgdi32", "-luser32", "-lopengl32"]
 
 
+def _resources(P):
+    """runtime/bmx2.rc and the icon it names, when both exist (a project from v0.1.8 or older has neither)."""
+    rc, ico = os.path.join(P.project, "runtime", "bmx2.rc"), os.path.join(P.gen, "bmx2.ico")
+    return [rc, ico] if os.path.isfile(rc) and os.path.isfile(ico) else []
+
+
 def build_key(P):
     src, hdr = _sources(P)
     h = hashlib.sha256(b"build1")
-    for p in hdr + src:
+    for p in hdr + src + _resources(P):
         h.update(os.path.basename(p).encode())
         h.update(file_bytes(p))
     return h.hexdigest()
@@ -783,6 +819,13 @@ def compile_game(P, C, log, progress=None):
             raise Fail("compile error:\n" + errors[0])
     with open(keyfile, "w") as f:
         json.dump(newkeys, f)
+    res = _resources(P)
+    if res:
+        log("adding the icon")
+        windres = os.path.join(os.path.dirname(P.clang), "x86_64-w64-mingw32-windres.exe")
+        ro = os.path.join(P.obj, "bmx2_res.o")     # a COFF object: lld would read a .res name as a raw .res file
+        run([windres, "-I", P.gen, "-i", res[0], "-O", "coff", "-o", ro], log, cwd=P.root, env=env)
+        objs.append(ro)
     log("linking")
     os.makedirs(P.game, exist_ok=True)
     tmp = P.exe + ".new"
@@ -1073,7 +1116,20 @@ def gui(root_dir, notice=None):
     P = Paths(root_dir)
     C = Config(P.cfg)
     win = tk.Tk()
-    win.title("Dave Mirra BMX 2 Recomp launcher")
+    win.title("Dave Mirra Freestyle BMX 2 launcher")
+
+    icon_set = [False]
+
+    def set_icon():
+        """The game's icon from the player's own build (gen/bmx2.ico); the default one before the first build."""
+        ico = os.path.join(P.gen, "bmx2.ico")
+        if not icon_set[0] and os.path.isfile(ico):
+            try:
+                win.iconbitmap(default=ico)
+                icon_set[0] = True
+            except tk.TclError:
+                pass
+    set_icon()
     win.geometry("780x660")
     win.minsize(660, 540)
     q = queue.Queue()
@@ -1347,6 +1403,7 @@ def gui(root_dir, notice=None):
 
     # ---- plumbing
     def refresh():
+        set_icon()
         if not busy.is_set() and adopt_disc(P, C):
             disc_var.set(C.get("disc", ""))
             log("found your game: %s" % C.get("disc"))
