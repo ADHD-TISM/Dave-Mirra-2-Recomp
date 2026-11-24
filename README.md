@@ -39,8 +39,10 @@ outside it.
 ## Install and play
 
 1. Install [RecompLauncher](https://recomplauncher.com).
-2. Add this recomp from its GitHub releases
-   (`ADHD-TISM/Dave-Mirra-2-Recomp`).
+2. Find Dave Mirra Freestyle BMX 2 in its catalog and install it. It is not
+   listed yet. Until it is, unpack a release zip (below) and add that folder in
+   RecompLauncher with **Settings > Developers > Developer tools > Add a
+   build**, or use the command line below.
 3. On the setup screen, pick your disc image (`.cue` with its `.bin`, or
    `.iso`), and tick **Download the build tools and the project's source**.
 4. The setup step translates the game's code from your disc and builds it. The
@@ -59,8 +61,12 @@ page and unpack it. Then, in that folder, build once and play:
 "Dave Mirra Freestyle BMX 2.exe" --disc=<your .cue or .iso> run
 ```
 
-After the first `run`, a double click on `Dave Mirra Freestyle BMX 2.exe`
-starts the game. It has no window of its own.
+After `prepare`, a double click on `Dave Mirra Freestyle BMX 2.exe` starts
+the game. It has no window of its own. Without `--disc=`, it uses the first
+image of the game in a `Dave Mirra 2` folder next to it.
+
+To update, unpack the new release zip over the folder and run the `prepare`
+line again. For another disc image, run `prepare` with the new `--disc=`.
 
 ## Controls
 

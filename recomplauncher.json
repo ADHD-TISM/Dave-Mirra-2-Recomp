@@ -154,6 +154,10 @@
   "actions": [
     { "id": "saves", "label": "Memory card", "help": "The game's saves, in the folder mc0.", "open": "saves" }
   ],
+  "exit_codes": {
+    "3": "The game reached code that was not recompiled yet. Please open an issue on the project's GitHub page and say what you were doing.",
+    "4": "The game ran into an instruction the recompiler doesn't handle. Please open an issue on the project's GitHub page with the log."
+  },
   "looks": {
     "allowed": false,
     "reason": "The game is started by the project's own program, so the filters can't reach it. Use the game's own Smooth filter and internal resolution."

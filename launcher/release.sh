@@ -5,10 +5,17 @@
 # Needs what build_exe.sh needs.
 set -e
 V=${1:?usage: sh launcher/release.sh <version, like v1.2.3> [out folder]}
-case "$V" in   # the packed program only takes a version of this form (release_tag in bmx2launcher.py)
-    v[0-9]*) ;;
-    *) echo "the version must look like v1.2.3, not $V" >&2; exit 2 ;;
-esac
+# the packed program only takes a version of this form (release_tag and version_tuple in bmx2launcher.py)
+if ! printf '%s\n' "$V" | grep -Eq '^v[0-9]+(\.[0-9]+)*$'; then
+    echo "the version must look like v1.2.3, not $V" >&2; exit 2
+fi
+# players' setup step downloads the project at this tag, so it must be this commit and on GitHub
+# (TRY_RELEASE=1 skips these checks, for a test zip that is never published)
+if [ -z "$TRY_RELEASE" ]; then
+    [ -z "$(git status --porcelain --untracked-files=no)" ] || { echo "the working tree has changes: commit them first" >&2; exit 2; }
+    [ "$(git rev-parse "$V^{commit}" 2>/dev/null)" = "$(git rev-parse HEAD)" ] || { echo "tag $V is not on HEAD" >&2; exit 2; }
+    git ls-remote --exit-code --tags origin "refs/tags/$V" > /dev/null || { echo "tag $V is not pushed to origin" >&2; exit 2; }
+fi
 OUT=${2:-$(dirname -- "$0")/dist}
 mkdir -p "$OUT"
 OUT=$(CDPATH= cd -- "$OUT" && pwd)

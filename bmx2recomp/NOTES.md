@@ -50,8 +50,23 @@ are older snapshots, kept for history.
   checker against the official schema (0 errors; the 3 official examples
   also pass). Not in the RecompLauncher catalog yet (badge links the site).
 - runtime/main.c: RECOMPLAUNCHER_MODE=bigpicture starts fullscreen.
+- Review fixes: without --root the program uses RECOMPLAUNCHER_DATA (Easy
+  Setup skipped); prepare exits 3 when a new release's project version is
+  missing and downloads are not allowed, and never looks up the newest tag
+  under RECOMPLAUNCHER=1; release_tag only in the packaged exe; release.sh
+  takes only vX.Y.Z and checks the tag is HEAD, pushed and the tree clean
+  (TRY_RELEASE=1 skips that); build_key also hashes the link recipe and
+  compiler name; bmx2.exe goes into place last (it is prepare.done); run
+  puts the game in a kill-on-close job so it ends with the program; the
+  last 3 logs are kept; nothing uncaught escapes (a windowed exe would show
+  a dialog); exit_codes 3 and 4.
 - Not done (Recomp Standards): CHD input (PS2 DVD CHDs use lzma/zlib/huff/
-  flac hunks, medium), a Linux build, Recomp Achievements, dumps values.
+  flac hunks, medium), a Linux build, Recomp Achievements, dumps values,
+  key bindings and window size as RecompLauncher settings (ini only), a new
+  pinned compiler is never installed over an old one (toolchain_ok only
+  checks the file exists; older than this change). bmx2.exe uses ANSI paths
+  (main(argc, argv), SetCurrentDirectoryA): a {data} or disc path outside
+  the system code page fails; a UTF-8 activeCodePage manifest would fix it.
   Not tried inside RecompLauncher itself.
 
 ## Exe icon and name (2026-11-23)
