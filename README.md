@@ -93,9 +93,9 @@ The memory card is the folder `game\memcard\mc0`. Back it up to keep your saves.
   open an issue with a screenshot of the message and what you were doing.
 - **Stutter:** make sure vsync is on in Settings, and try a lower resolution.
   Most laptops with two graphics chips from different makers (NVIDIA or AMD
-  plus Intel) run the game on the dedicated chip, and with vsync on the game
-  paces frames with its own timer instead; `game\bmx2.log` then says "driven
-  by another graphics chip". The log line `gs: OpenGL ... (<chip>)` names the
+  plus Intel, or NVIDIA plus AMD) run the game on the dedicated chip, and
+  with vsync on the game paces frames with its own timer instead;
+  `game\bmx2.log` then says "driven by another graphics chip". The log line `gs: OpenGL ... (<chip>)` names the
   chip in use. If it names the integrated chip, open Windows Settings >
   System > Display > Graphics, add `game\bmx2.exe` (Browse) and set it to
   High performance.
