@@ -38,8 +38,9 @@ alone there is no display), deleted after.
   names the chip in use.
 - On the NVIDIA chip with vsync, the scripted ride (a PAD_SCRIPT route from
   the main menu into a level, riding from frame 6500; kept in the
-  ignored scratch file ride.txt; 7600 frames, real time) had ~52 presents over 20 ms apart after frame 6600
-  (desktop: 0). Not the CPU (12% busy), not the GPU (scale 2 cut GPU frames
+  ignored scratch file ride.txt; 7600 frames, real time) had ~52 presents
+  over 20 ms apart after frame 6600 (desktop: 0). Not the CPU (12% busy),
+  not the GPU (scale 2 cut GPU frames
   over 12 ms from 455 to 10, gaps stayed), not the queue (timer at 60.6 Hz
   kept 2 frames queued, gaps stayed). Vsync off: 3. The picture is copied
   from the NVIDIA chip to the Intel chip, and vsync on that path is uneven.
