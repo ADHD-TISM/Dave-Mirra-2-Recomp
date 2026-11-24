@@ -17,7 +17,8 @@ nothing is written outside the root folder.
     ... download|update|build|play|update-launcher
 
 --root DIR keeps everything in DIR (RecompLauncher passes its data folder);
-without it, the folder this program is in. Folders under the root: tools/
+without it, RECOMPLAUNCHER_DATA when RecompLauncher set it, else the folder
+this program is in. Folders under the root: tools/
 (compiler and Python, downloaded), bmx2recomp/ (the project: recompilers and
 runtime), work/ (files read from the disc, generated code, objects) and game/
 (the built game, bmx2.ini, the memory card and the log). Updates never touch
@@ -758,7 +759,9 @@ def _resources(P):
 def build_key(P):
     src, hdr = _sources(P)
     h = hashlib.sha256(b"build1")
-    h.update(repr((LINK, LLVM_NAME)).encode())   # the link recipe and compiler (each object's own key has its flags)
+    flags = [a for d in (os.path.join(P.project, "runtime"), P.gen) for a in _flags(P, os.path.join(d, "x.c"))
+             if not os.path.isabs(a)]
+    h.update(repr((LINK, LLVM_NAME, flags)).encode())   # the compile and link recipe and the compiler
     for p in hdr + src + _resources(P):
         h.update(os.path.basename(p).encode())
         h.update(file_bytes(p))
@@ -1061,11 +1064,14 @@ def open_session(root, disc=None):
     return P, C
 
 
+NEEDS_DOWNLOADS = 10    # prepare's exit code; the game's own codes (3, 4, 5) mean something else
+
+
 def prepare(P, C, accept, log):
     """RecompLauncher's setup step (recomplauncher.json): no window, nothing asked. Downloads the build tools and the
     project only with accept (the player ticked it on the setup screen), then builds the game from the chosen disc.
-    Prints lines "progress <0 to 1> <text>". Returns 0 when the game is built (or already was), 3 when the downloads
-    are needed but not allowed; a failure raises Fail."""
+    Prints lines "progress <0 to 1> <text>". Returns 0 when the game is built (or already was), NEEDS_DOWNLOADS (10)
+    when the downloads are needed but not allowed; a failure raises Fail."""
     def say(f, text):
         print("progress %.3f %s" % (min(max(f, 0.0), 1.0), text), flush=True)
     disc = C.get("disc")
@@ -1075,22 +1081,26 @@ def prepare(P, C, accept, log):
         if not accept:
             print("the build tools and the project are not downloaded yet, and --accept-downloads was not given",
                   flush=True)
-            return 3
+            return NEEDS_DOWNLOADS
         say(0.01, "Downloading the C compiler")
 
         def download_log(s):   # fetch logs "  compiler: 40% of 190.0 MB": show it on the setup screen too
             m = re.match(r"\s*(compiler|python): (\d+)% of", s)
             if m:
-                say(0.01 + 0.18 * int(m.group(2)) / 100, "Downloading the %s (%s%%)"
+                lo, span = (0.01, 0.15) if m.group(1) == "compiler" else (0.16, 0.03)   # one after the other
+                say(lo + span * int(m.group(2)) / 100, "Downloading the %s (%s%%)"
                     % ("C compiler" if m.group(1) == "compiler" else "Python", m.group(2)))
             log(s)
         install_toolchain(P, download_log)
         say(0.2, "Downloading the project")
-        install_project(P, C, log, want=release_tag())
+        if release_tag() or os.environ.get("RECOMPLAUNCHER") != "1":
+            install_project(P, C, log, want=release_tag())
+        else:   # a build without a packed version, added to RecompLauncher by hand: the newest one, as a first install
+            install_project(P, C, log)
     elif not accept and release_tag() and release_tag() != C.get("tag") and not is_working_copy(P):
         print("this release needs project version %s (installed: %s), and --accept-downloads was not given"
               % (release_tag(), C.get("tag", "none")), flush=True)
-        return 3
+        return NEEDS_DOWNLOADS
     elif accept:   # a packaged release builds its own project version, also when the player goes back to an older one
         want = release_tag()
         if want:
@@ -1211,10 +1221,12 @@ def message_box(text):
         pass
 
 
+COMMANDS = {"status", "prepare", "download", "update", "build", "play", "run", "update-launcher", "-h", "--help", "help"}
+
+
 def main(argv):
     attach_std_streams()
-    cmds = {"status", "prepare", "download", "update", "build", "play", "run", "update-launcher", "-h", "--help", "help"}
-    if any(a in cmds for a in argv):
+    if any(a in COMMANDS for a in argv):
         return cli(argv)
     # no command (a double click, or RecompLauncher with Easy Setup skipped): start the game when it is built
     try:
@@ -1222,7 +1234,10 @@ def main(argv):
         P, C = open_session(root, disc)
         if ready_to_play(P, C):
             return play(P, C, lambda s: print(s, flush=True), wait=True, extra=_words)   # the player's launch options
-        if os.environ.get("RECOMPLAUNCHER") == "1":
+        if os.path.isfile(P.exe):      # built, but the disc image it was built from is gone or moved
+            message = ("The game is built, but its disc image is not where it was (%s). Put it back, or pick it "
+                       "again (--disc=FILE, or Easy Setup in RecompLauncher)." % C.get("disc", "none chosen"))
+        elif os.environ.get("RECOMPLAUNCHER") == "1":
             message = ("The game is not set up yet. Turn Easy Setup back on for it in RecompLauncher, pick your "
                        "disc image there and let it build the game.")
         else:
@@ -1242,10 +1257,13 @@ def guarded_main(argv):
     try:
         return main(argv)
     except Exception as e:      # the last stop: say what happened where it can be seen, then fail
+        text = "%s: %s: %s" % (GAME_NAME, type(e).__name__, e)
         try:
-            print("error: %s: %s" % (type(e).__name__, e), flush=True)
+            print("error: " + text, flush=True)
         except Exception:
             pass
+        if not any(a in COMMANDS for a in argv):   # a double click: nobody sees what was printed
+            message_box(text)                      # (never for prepare: the setup step must not wait on a dialog)
         return 1
 
 

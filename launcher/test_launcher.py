@@ -266,7 +266,7 @@ def _prepare(accept, **stubs):
 
 def test_prepare_needs_the_downloads_allowed(d):
     code, lines, calls = _prepare(False, toolchain_ok=lambda P: False)
-    check(code == 3 and calls == [], (code, calls))
+    check(code == bl.NEEDS_DOWNLOADS == 10 and calls == [], (code, calls))
     check(any("--accept-downloads" in l for l in lines), lines)
 
 
@@ -284,7 +284,7 @@ def test_prepare_builds_its_release_version(d):
 
 def test_prepare_wants_downloads_for_a_new_release(d):
     code, lines, calls = _prepare(False, release_tag=lambda: "v1.2.3", is_working_copy=lambda P: False)
-    check(code == 3 and calls == [] and any("v1.2.3" in l for l in lines), (code, lines, calls))
+    check(code == bl.NEEDS_DOWNLOADS and calls == [] and any("v1.2.3" in l for l in lines), (code, lines, calls))
 
 
 def test_prepare_keeps_the_project_under_recomplauncher(d):
@@ -361,8 +361,11 @@ def test_no_command_uses_recomplauncher_data(d):
 def test_an_unexpected_error_does_not_escape(d):
     def boom(argv):
         raise TypeError("odd data")
-    with _Stubs(main=boom):
+    boxes = []
+    with _Stubs(main=boom, message_box=boxes.append):
         check(bl.guarded_main([]) == 1, "guarded_main did not return 1")
+        check(len(boxes) == 1 and "odd data" in boxes[0], "no message box after a double click: %r" % boxes)
+        check(bl.guarded_main(["prepare"]) == 1 and len(boxes) == 1, "a message box during prepare")
 
 
 def main():
