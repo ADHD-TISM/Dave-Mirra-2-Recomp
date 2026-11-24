@@ -247,6 +247,11 @@ int main(int argc, char **argv) {
     watch_setup();
     if (!SetCurrentDirectoryA(disc)) { LOG("cannot enter disc folder %s\n", disc); return 1; }
     config_load("bmx2.ini");
+    {   /* RecompLauncher's Big Picture mode (a controller on the couch): start fullscreen; F11 still toggles.
+         * Only RecompLauncher sets this variable; read once at start-up. */
+        const char *mode = getenv("RECOMPLAUNCHER_MODE");
+        if (mode && !strcmp(mode, "bigpicture")) g_cfg.fullscreen = 1;
+    }
     if (g_cfg.scale && !scale_given) gs_scale = g_cfg.scale;
     if (!g_cfg.frame_limit) g_turbo = 1;
     hw_init();

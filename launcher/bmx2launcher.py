@@ -1,22 +1,28 @@
 #!/usr/bin/env python3
-"""Launcher for the Dave Mirra Freestyle BMX 2 (PS2) recompilation, on Windows.
+"""Dave Mirra Freestyle BMX 2 (PS2) recompilation, on Windows: builds the game
+from your own disc and starts it. RecompLauncher (recomplauncher.json) runs
+it; it has no window of its own.
 
-Sets up, builds, updates and starts the game. You need your own copy of the
-game (SLUS-20159, USA): put the .bin/.cue or .iso in the "Dave Mirra 2" folder
-next to this launcher. No other installs are needed: the build tools (a C
-compiler and Python for the code generators) are downloaded into tools/, and
-nothing is written outside the launcher's folder.
+You need your own copy of the game (SLUS-20159, USA, version 1.00) as a
+.bin/.cue or an .iso. The build tools (a C compiler and Python for the code
+generators) are downloaded into tools/, only with --accept-downloads, and
+nothing is written outside the root folder.
 
-    python bmx2launcher.py                     open the window
-    python bmx2launcher.py status              what is ready (no window)
-    python bmx2launcher.py download|update|build|play|update-launcher
-    python bmx2launcher.py --root DIR ...      keep everything in DIR instead
-    python bmx2launcher.py --disc FILE ...     use this disc image
+    Dave Mirra Freestyle BMX 2.exe --root DIR --disc=FILE prepare --accept-downloads
+                                               download the tools, build the game (RecompLauncher's setup step)
+    Dave Mirra Freestyle BMX 2.exe --root DIR --disc=FILE run
+                                               start the game and wait until it ends; its exit code is the game's
+                                               (words after run go to the game, e.g. run --frames 600)
+    ... status                                 what is ready
+    ... download|update|build|play|update-launcher
 
-Folders under the root: "Dave Mirra 2" (your disc image), tools/ (compiler and
-Python, downloaded), bmx2recomp/ (the project: recompilers and runtime), work/
-(files read from the disc, generated code, objects) and game/ (the built game,
-bmx2.ini and its log). Updates never touch game/, so your settings are kept.
+--root DIR keeps everything in DIR (RecompLauncher passes its data folder);
+without it, the folder this program is in. Folders under the root: tools/
+(compiler and Python, downloaded), bmx2recomp/ (the project: recompilers and
+runtime), work/ (files read from the disc, generated code, objects) and game/
+(the built game, bmx2.ini, the memory card and the log). Updates never touch
+game/, so settings and saves are kept. Started with no command, the game is
+started when it is built.
 """
 import errno
 import hashlib
@@ -39,7 +45,7 @@ from concurrent.futures import ThreadPoolExecutor
 # The project's online home (GitHub "owner/name"). Empty while it is not published:
 # the launcher then uses the bmx2recomp folder next to it and Update says so.
 REPO = "ADHD-TISM/Dave-Mirra-2-Recomp"
-LAUNCHER_VERSION = "8"
+LAUNCHER_VERSION = "9"
 
 GAME_NAME = "Dave Mirra Freestyle BMX 2"
 GAME_SERIAL = "SLUS-20159"
@@ -58,7 +64,6 @@ PY_SHA256 = "8d3f33be9eb810f23c102f08475af2854e50484b8e4e06275e937be61ce3d2fb"
 
 FROZEN = bool(getattr(sys, "frozen", False))
 NO_WINDOW = 0x08000000
-NEW_CONSOLE = 0x00000010
 EXE_FILE = "bmx2.exe"
 INI_FILE = "bmx2.ini"
 UA = {"User-Agent": "bmx2recomp-launcher"}
@@ -371,8 +376,18 @@ def fetch_project_zip(P, tag, log):
     return z
 
 
-def install_project(P, C, log, force=False):
-    """Download the newest project version unless that one is already installed."""
+def release_tag():
+    """The project version a packaged release was made with (launcher/release.sh packs it in), or None."""
+    try:
+        with open(os.path.join(getattr(sys, "_MEIPASS", ""), "release_tag.txt"), encoding="ascii") as f:
+            tag = f.read().strip()
+        return tag if version_tuple(tag) and tag.startswith("v") else None
+    except (OSError, ValueError):
+        return None
+
+
+def install_project(P, C, log, force=False, want=None):
+    """Download the newest project version (or the version want) unless that one is already installed."""
     if is_working_copy(P):
         log("project: using your own copy in %s (the launcher never replaces it)" % P.project)
         return "local"
@@ -385,7 +400,7 @@ def install_project(P, C, log, force=False):
             return C.get("tag", "local")
         raise Fail("The project is not published online yet, so it cannot be downloaded. "
                    "Put the bmx2recomp folder next to the launcher.")
-    tag = latest_tag(log, strict=not (project_ok(P) and C.get("tag")))
+    tag = want or latest_tag(log, strict=not (project_ok(P) and C.get("tag")))
     have = C.get("tag")
     if project_ok(P) and not force and have and (tag is None or tag == have):
         log("project is up to date (%s)" % have)
@@ -667,7 +682,7 @@ def generate(P, C, disc, log):
         log("generated code is up to date")
         return
     if not project_ok(P):
-        raise Fail("the project is missing (Update tab)")
+        raise Fail("the project is missing (download)")
     check_disc(C, disc)
     key = regen_key(P, disc)
     py = P.tool_python
@@ -757,7 +772,7 @@ def built_ok(P, C):
 
 def compile_game(P, C, log, progress=None):
     if not toolchain_ok(P):
-        raise Fail("the build tools are not downloaded yet (Update tab)")
+        raise Fail("the build tools are not downloaded yet (download)")
     if built_ok(P, C):
         log("game is up to date")
         return
@@ -847,9 +862,9 @@ def compile_game(P, C, log, progress=None):
 
 def build_all(P, C, disc, log, progress=None):
     if not disc:
-        raise Fail("put your game in the \"Dave Mirra 2\" folder or choose it first (Build tab)")
+        raise Fail("put your game in the \"Dave Mirra 2\" folder or choose it with --disc=FILE")
     if not toolchain_ok(P) or not project_ok(P):
-        raise Fail("download the build tools first (Update tab)")
+        raise Fail("download the build tools first (download)")
     generate(P, C, disc, log)
     compile_game(P, C, log, progress)
 
@@ -906,12 +921,11 @@ KEYS = [("up", "up"), ("down", "down"), ("left", "left"), ("right", "right"), ("
 for _n, _d in KEYS:
     SETTINGS.append(("key_" + _n, "Input", "Key: " + _n.replace("_", " ").upper(), "key", None, _d, None))
 SCHEMA = {s[0]: s for s in SETTINGS}
-SETTING_TABS = ["Gameplay", "Video", "Input", "Audio", "Debug", "All settings"]
 
 
 def default_ini_text():
     out = ["# Dave Mirra Freestyle BMX 2 recomp settings (bmx2.ini). Delete this file to get the defaults back.",
-           "# The launcher's Settings tab edits it; updates never replace it.", ""]
+           "# RecompLauncher's settings for the game edit it; updates never replace it.", ""]
     for key, _tab, _lab, kind, _ch, dflt, comment in SETTINGS:
         if comment:
             out.append("# " + comment)
@@ -983,37 +997,28 @@ def write_ini(path, values):
 
 # ---------------------------------------------------------------- play
 
-DEBUG_FLAGS = [("--log-sys 1", "Log kernel calls (system calls, threads)"),
-               ("--log-pad", "Log controller traffic"),
-               ("--log-iop", "Log the I/O processor"),
-               ("--log-ipu", "Log the movie decoder")]
-
-
-def play(P, C, log):
+def play(P, C, log, wait=False, extra=()):
+    """Start the built game; with wait, stay until it ends and return its exit code. extra: arguments for bmx2.exe."""
     if not os.path.isfile(P.exe):
-        raise Fail("the game is not built yet (Build tab)")
+        raise Fail("the game is not built yet (run prepare, or build)")
     disc = C.get("disc")
     if not disc:
-        raise Fail("choose your game image first (Build tab)")
+        raise Fail("no game image chosen (--disc=FILE)")
     image = resolve_image(disc)
-    args = [P.exe, "--image", os.path.abspath(image)]
-    for f, _ in DEBUG_FLAGS:
-        if f in C.get("debug_flags", []):
-            args += f.split()
-    args.append(P.game)
-    if C.get("debug_console", False):
-        subprocess.Popen(args, cwd=P.game, creationflags=NEW_CONSOLE)
-    else:
-        logf = open(os.path.join(P.game, "bmx2.log"), "w")    # what the game prints, for when something goes wrong
-        subprocess.Popen(args, cwd=P.game, creationflags=NO_WINDOW, stdout=logf, stderr=subprocess.STDOUT)
+    args = [P.exe, "--image", os.path.abspath(image)] + list(extra) + [P.game]
+    logf = open(os.path.join(P.game, "bmx2.log"), "w")    # what the game prints, for when something goes wrong
+    try:
+        proc = subprocess.Popen(args, cwd=P.game, creationflags=NO_WINDOW, stdout=logf, stderr=subprocess.STDOUT)
+    finally:
         logf.close()
     log("started the game (its messages go to %s)" % os.path.join(P.game, "bmx2.log"))
+    return proc.wait() if wait else 0
 
 
 # ---------------------------------------------------------------- status
 
 def status(P, C):
-    """(key, label, ok, tab_to_fix_it) for each requirement."""
+    """(key, label, ok, command_that_fixes_it) for each requirement."""
     disc = C.get("disc")
     disc_ok = False
     try:
@@ -1023,11 +1028,11 @@ def status(P, C):
     except (Fail, OSError):
         pass
     return [
-        ("tools", "Build tools", toolchain_ok(P), "Update"),
-        ("project", "Project files", project_ok(P), "Update"),
-        ("disc", "Your game (%s)" % GAME_SERIAL, disc_ok, "Build"),
-        ("gen", "Game code generated", generated_ok(P, C, disc) if disc_ok else False, "Build"),
-        ("built", "Game built", built_ok(P, C) if disc_ok else os.path.isfile(P.exe), "Build"),
+        ("tools", "Build tools", toolchain_ok(P), "download"),
+        ("project", "Project files", project_ok(P), "download"),
+        ("disc", "Your game (%s)" % GAME_SERIAL, disc_ok, "--disc=FILE"),
+        ("gen", "Game code generated", generated_ok(P, C, disc) if disc_ok else False, "build"),
+        ("built", "Game built", built_ok(P, C) if disc_ok else os.path.isfile(P.exe), "build"),
     ]
 
 
@@ -1049,32 +1054,72 @@ def open_session(root, disc=None):
     return P, C
 
 
+def prepare(P, C, accept, log):
+    """RecompLauncher's setup step (recomplauncher.json): no window, nothing asked. Downloads the build tools and the
+    project only with accept (the player ticked it on the setup screen), then builds the game from the chosen disc.
+    Prints lines "progress <0 to 1> <text>". Returns 0 when the game is built (or already was), 3 when the downloads
+    are needed but not allowed; a failure raises Fail."""
+    def say(f, text):
+        print("progress %.3f %s" % (min(max(f, 0.0), 1.0), text), flush=True)
+    disc = C.get("disc")
+    if not disc:
+        raise Fail("prepare: no disc image given (--disc=FILE)")
+    if not (toolchain_ok(P) and project_ok(P)):
+        if not accept:
+            print("the build tools and the project are not downloaded yet, and --accept-downloads was not given",
+                  flush=True)
+            return 3
+        say(0.01, "Downloading the C compiler")
+        install_toolchain(P, log)
+        say(0.2, "Downloading the project")
+        install_project(P, C, log, want=release_tag())
+    elif accept:   # a packaged release builds its own project version, also when the player goes back to an older one
+        want = release_tag()
+        say(0.2, ("Getting project version %s" % want) if want else "Checking for a newer project version")
+        install_project(P, C, log, want=want)
+    if generated_ok(P, C, disc) and built_ok(P, C):
+        say(1, "Already built")
+        return 0
+    say(0.25, "Translating the game's code from your disc")
+    generate(P, C, disc, log)
+    say(0.4, "Building the game")
+    compile_game(P, C, log, lambda d, n: say(0.4 + 0.6 * d / max(n, 1), "Building the game (%d of %d files)" % (d, n)))
+    say(1, "Ready to play")
+    return 0
+
+
 def cli(argv):
-    root, disc, cmd = None, None, []
+    root, disc, cmd, accept = None, None, [], False
     it = iter(argv)
     for a in it:
         if a == "--root":
             root = next(it, None)
         elif a == "--disc":
             disc = next(it, None)
+        elif a.startswith("--disc="):
+            disc = a[len("--disc="):]
+        elif a == "--accept-downloads":
+            accept = True
         else:
             cmd.append(a)
     try:
         P, C = open_session(root, disc)
     except (Fail, OSError) as e:
-        print("error: %s" % e)
+        print("error: %s" % e, flush=True)
         return 1
     log = lambda s: print(s, flush=True)
     what = cmd[0] if cmd else "status"
     try:
         if what == "status":
             print("root: %s" % P.root)
-            for _k, label, ok, tab in status(P, C):
-                print("%s %s%s" % ("OK " if ok else "-- ", label, "" if ok else "   (%s tab)" % tab))
+            for _k, label, ok, fix in status(P, C):
+                print("%s %s%s" % ("OK " if ok else "-- ", label, "" if ok else "   (%s)" % fix))
             print("game image: %s" % C.get("disc", "none"))
+        elif what == "prepare":
+            return prepare(P, C, accept, log)
         elif what == "download":
             install_toolchain(P, log)
-            install_project(P, C, log)
+            install_project(P, C, log, want=release_tag())
         elif what == "update":
             install_project(P, C, log)
         elif what == "update-launcher":
@@ -1083,464 +1128,73 @@ def cli(argv):
             build_all(P, C, C.get("disc"), log)
         elif what == "play":
             play(P, C, log)
+        elif what == "run":            # like play, but stays until the game ends and returns its exit code;
+            return play(P, C, log, wait=True, extra=cmd[1:])   # the words after it go to the game
         else:
             print(__doc__)
             return 2
     except (Fail, OSError) as e:
-        print("error: %s" % e)
+        print("error: %s" % e, flush=True)
         return 1
     return 0
 
 
-# ---------------------------------------------------------------- window
-
-LIGHT = dict(bg="#f0f0f0", fg="#000000", field="#ffffff", btn="#e1e1e1", btn_hot="#d0d0d0", line="#adadad",
-             muted="#6b6b6b", warn="#b36b00", ok="#1a7f37", bad="#c62828", accent="#0078d7")
-DARK = dict(bg="#1e1f22", fg="#e6e6e6", field="#2b2d31", btn="#3a3c42", btn_hot="#4a4d55", line="#4a4d55",
-            muted="#9a9da5", warn="#e0a030", ok="#4cc366", bad="#ff6b6b", accent="#3b82f6")
-
-
-def system_prefers_dark():
+def attach_std_streams():
+    """The packaged program has no console, so Python gives it no stdout and stderr. When whoever started it handed
+    it a pipe or a file for them (RecompLauncher reads the setup step's progress lines that way), write there;
+    otherwise, as when it is started by a double click, what it prints goes nowhere."""
+    if sys.stdout is not None:
+        return
+    streams = []
     try:
-        import winreg
-        with winreg.OpenKey(winreg.HKEY_CURRENT_USER,
-                            r"Software\Microsoft\Windows\CurrentVersion\Themes\Personalize") as k:
-            return winreg.QueryValueEx(k, "AppsUseLightTheme")[0] == 0
-    except OSError:
-        return False
+        import ctypes
+        import msvcrt
+        k32 = ctypes.windll.kernel32
+        k32.GetStdHandle.restype = ctypes.c_void_p
+        for which in (-11, -12):    # STD_OUTPUT_HANDLE, STD_ERROR_HANDLE
+            h = k32.GetStdHandle(which)
+            if h in (None, 0, ctypes.c_void_p(-1).value) or k32.GetFileType(ctypes.c_void_p(h)) == 0:
+                streams.append(None)
+                continue
+            streams.append(os.fdopen(msvcrt.open_osfhandle(h, os.O_WRONLY), "w", encoding="utf-8", errors="replace"))
+    except (OSError, AttributeError, ValueError, ImportError):
+        streams = []
+    out = streams[0] if streams else None
+    err = streams[1] if len(streams) > 1 else None
+    sink = None if (out and err) else open(os.devnull, "w")
+    sys.stdout = out or err or sink
+    sys.stderr = err or out or sink
 
 
-def gui(root_dir, notice=None):
-    import queue
-    import tkinter as tk
-    from tkinter import filedialog, messagebox, ttk
-
-    P = Paths(root_dir)
-    C = Config(P.cfg)
-    win = tk.Tk()
-    win.title("Dave Mirra Freestyle BMX 2 launcher")
-
-    icon_set = [False]
-
-    def set_icon():
-        """The game's icon from the player's own build (gen/bmx2.ico); the default one before the first build."""
-        ico = os.path.join(P.gen, "bmx2.ico")
-        if not icon_set[0] and os.path.isfile(ico):
-            try:
-                win.iconbitmap(default=ico)
-                icon_set[0] = True
-            except tk.TclError:
-                pass
-    set_icon()
-    win.geometry("780x660")
-    win.minsize(660, 540)
-    q = queue.Queue()
-    busy = threading.Event()
-
-    def log(s):
-        q.put(("log", s))
-
-    style = ttk.Style(win)
-    native_theme = style.theme_use()
-    plain = []          # classic tk widgets that ttk's theme does not colour
-    pal = dict(LIGHT)
-
-    def apply_theme(dark):
-        pal.update(DARK if dark else LIGHT)
-        if dark:
-            style.theme_use("clam")
-            style.configure(".", background=pal["bg"], foreground=pal["fg"], fieldbackground=pal["field"],
-                            bordercolor=pal["line"], lightcolor=pal["bg"], darkcolor=pal["bg"],
-                            troughcolor=pal["field"], insertcolor=pal["fg"], focuscolor=pal["bg"])
-            style.map(".", foreground=[("disabled", pal["muted"])])
-            style.configure("TButton", background=pal["btn"], padding=(8, 3))
-            style.map("TButton", background=[("active", pal["btn_hot"]), ("disabled", pal["bg"])])
-            style.configure("TNotebook", background=pal["bg"])
-            style.configure("TNotebook.Tab", background=pal["btn"], foreground=pal["fg"], padding=(10, 3))
-            style.map("TNotebook.Tab", background=[("selected", pal["bg"])])
-            style.configure("TCombobox", arrowcolor=pal["fg"], selectbackground=pal["field"], selectforeground=pal["fg"])
-            style.map("TCombobox", fieldbackground=[("readonly", pal["field"])], foreground=[("readonly", pal["fg"])])
-            style.configure("TCheckbutton", indicatorbackground=pal["field"], indicatorforeground=pal["fg"])
-            style.configure("TProgressbar", background=pal["accent"])
-            win.option_add("*TCombobox*Listbox.background", pal["field"])
-            win.option_add("*TCombobox*Listbox.foreground", pal["fg"])
-            win.option_add("*TCombobox*Listbox.selectBackground", pal["accent"])
-        else:
-            style.theme_use(native_theme)
-            win.option_add("*TCombobox*Listbox.background", "white")
-            win.option_add("*TCombobox*Listbox.foreground", "black")
-            win.option_add("*TCombobox*Listbox.selectBackground", "#0078d7")
-        style.configure("Muted.TLabel", foreground=pal["muted"])
-        style.configure("Warn.TLabel", foreground=pal["warn"])
-        win.configure(background=pal["bg"] if dark else style.lookup("TFrame", "background") or pal["bg"])
-        for w in plain:
-            w.configure(background=pal["field"] if isinstance(w, tk.Text) else pal["bg"])
-            if isinstance(w, tk.Text):
-                w.configure(foreground=pal["fg"], insertbackground=pal["fg"])
-        try:                       # dark title bar on Windows 10/11
-            import ctypes
-            hwnd = ctypes.windll.user32.GetParent(win.winfo_id())
-            v = ctypes.c_int(1 if dark else 0)
-            ctypes.windll.dwmapi.DwmSetWindowAttribute(hwnd, 20, ctypes.byref(v), 4)
-        except Exception:
-            pass
-
-    dark_var = tk.BooleanVar(value=C.get("dark", system_prefers_dark()))
-
-    top = ttk.Frame(win, padding=(10, 8))
-    top.pack(fill="x")
-    ttk.Label(top, text="Dave Mirra Freestyle BMX 2", font=("Segoe UI", 14, "bold")).pack(side="left")
-    ttk.Label(top, text="  PS2 recomp", style="Muted.TLabel").pack(side="left")
-    ver = ttk.Label(top, text="")
-    ver.pack(side="right")
-
-    def toggle_dark():
-        C.set("dark", bool(dark_var.get()))
-        apply_theme(dark_var.get())
-        refresh()
-
-    ttk.Checkbutton(top, text="Dark mode", variable=dark_var, command=toggle_dark).pack(side="right", padx=16)
-
-    nb = ttk.Notebook(win)
-    nb.pack(fill="both", expand=True, padx=10)
-    tabs = {}
-    for name in ("Play", "Build", "Update", "Settings"):
-        fr = ttk.Frame(nb, padding=12)
-        nb.add(fr, text=name)
-        tabs[name] = fr
-
-    bar = ttk.Progressbar(win, mode="determinate")
-    bar.pack(fill="x", padx=10, pady=(6, 0))
-    logbox = tk.Text(win, height=9, wrap="word", state="disabled", font=("Consolas", 9))
-    logbox.pack(fill="both", padx=10, pady=8)
-    plain.append(logbox)
-
-    buttons = []
-
-    def lock(b):
-        buttons.append(b)
-        return b
-
-    # ---- Play tab
-    p = tabs["Play"]
-    ttk.Label(p, text="What is ready", font=("Segoe UI", 10, "bold")).pack(anchor="w")
-    rows = {}
-    for key, label, _ok, _tab in status(P, C):
-        l = ttk.Label(p, text=label, cursor="hand2", font=("Segoe UI", 11))
-        l.pack(anchor="w", pady=2)
-        rows[key] = l
-    ttk.Label(p, text="Click a ✗ to go where it is fixed.", style="Muted.TLabel").pack(anchor="w", pady=(0, 10))
-    play_btn = lock(ttk.Button(p, text="Play"))
-    play_btn.pack(anchor="w", ipadx=24, ipady=6)
-    close_var = tk.BooleanVar(value=C.get("close_on_play", False))
-
-    def set_close():
-        C.set("close_on_play", bool(close_var.get()))
-
-    ttk.Checkbutton(p, text="Close the launcher when the game starts", variable=close_var,
-                    command=set_close).pack(anchor="w", pady=(8, 0))
-    ttk.Label(p, style="Muted.TLabel", wraplength=680,
-              text="Keyboard: arrows = d-pad, W A S D = left stick, K / space = cross, L = circle, J = square, "
-                   "I = triangle, Q / E = L1 / R1, 1 / 3 = L2 / R2, Enter = start. An Xbox-style gamepad works too. "
-                   "F11 or Alt+Enter = fullscreen.").pack(anchor="w", pady=(10, 0))
-    upd_note = ttk.Label(p, text="", style="Warn.TLabel")
-    upd_note.pack(anchor="w", pady=8)
-
-    # ---- Build tab
-    b = tabs["Build"]
-    ttk.Label(b, text="Your game image (%s, %s): .cue + .bin, or .iso" % (GAME_NAME, GAME_SERIAL)).pack(anchor="w")
-    ttk.Label(b, style="Muted.TLabel", wraplength=680,
-              text="Put it in the \"Dave Mirra 2\" folder next to the launcher and it is found automatically, "
-                   "or browse to it anywhere. You need your own copy of the game.").pack(anchor="w")
-    disc_var = tk.StringVar(value=C.get("disc", ""))
-    row = ttk.Frame(b)
-    row.pack(fill="x", pady=4)
-    ttk.Entry(row, textvariable=disc_var).pack(side="left", fill="x", expand=True)
-
-    def browse():
-        if busy.is_set():
-            return
-        f = filedialog.askopenfilename(title="Choose the game image",
-                                       filetypes=[("Disc image", "*.cue *.bin *.iso"), ("All files", "*.*")])
-        if f:
-            disc_var.set(os.path.normpath(f))
-            C.set("disc", disc_var.get())
-            refresh()
-
-    def open_discdir():
-        os.makedirs(P.discdir, exist_ok=True)
-        os.startfile(P.discdir)
-
-    ttk.Button(row, text="Browse...", command=browse).pack(side="left", padx=(6, 0))
-    ttk.Button(row, text="Open folder", command=open_discdir).pack(side="left", padx=(6, 0))
-    disc_msg = ttk.Label(b, text="", wraplength=660)
-    disc_msg.pack(anchor="w", pady=4)
-    build_btn = lock(ttk.Button(b, text="Build the game"))
-    build_btn.pack(anchor="w", pady=6, ipadx=16, ipady=4)
-    ttk.Label(b, wraplength=680, style="Muted.TLabel",
-              text="Checks your game, reads its code from the disc image, translates it to C and builds the game "
-                   "into the game folder. Steps that are already up to date are skipped. The first build takes "
-                   "about a minute.").pack(anchor="w")
-
-    # ---- Update tab
-    u = tabs["Update"]
-    info = ttk.Label(u, text="", justify="left")
-    info.pack(anchor="w", pady=(0, 8))
-    dl_btn = lock(ttk.Button(u, text="Download (build tools and project, about 200 MB)"))
-    dl_btn.pack(anchor="w", pady=4, ipadx=8, ipady=3)
-    up_btn = lock(ttk.Button(u, text="Update the project"))
-    up_btn.pack(anchor="w", pady=4, ipadx=8, ipady=3)
-    ul_btn = lock(ttk.Button(u, text="Update launcher"))
-    ul_btn.pack(anchor="w", pady=4, ipadx=8, ipady=3)
-    ttk.Label(u, wraplength=680, style="Muted.TLabel",
-              text="Updates never touch the game folder, so your settings are kept. After updating the project, "
-                   "build again.").pack(anchor="w", pady=8)
-
-    # ---- Settings tab
-    s = tabs["Settings"]
-    svars = {}
-    for k, v in read_ini(P.ini).items():
-        svars[k] = tk.StringVar(value=v)
-    snb = ttk.Notebook(s)
-    snb.pack(fill="both", expand=True)
-    stabs = {}
-    for name in SETTING_TABS:
-        fr = ttk.Frame(snb, padding=8)
-        snb.add(fr, text=name)
-        stabs[name] = fr
-
-    def scrolled(parent):
-        cv = tk.Canvas(parent, highlightthickness=0, background=pal["bg"])
-        plain.append(cv)
-        sb = ttk.Scrollbar(parent, orient="vertical", command=cv.yview)
-        inner = ttk.Frame(cv)
-        inner.bind("<Configure>", lambda e: cv.configure(scrollregion=cv.bbox("all")))
-        cv.create_window((0, 0), window=inner, anchor="nw")
-        cv.configure(yscrollcommand=sb.set)
-        cv.pack(side="left", fill="both", expand=True)
-        sb.pack(side="right", fill="y")
-        return inner
-
-    def widget_for(parent, key, label, r):
-        sc = SCHEMA.get(key)
-        ttk.Label(parent, text=label).grid(row=r, column=0, sticky="w", padx=(0, 12), pady=2)
-        var = svars.setdefault(key, tk.StringVar(value=""))
-        if sc and sc[3] == "bool":
-            w = ttk.Checkbutton(parent, variable=var, onvalue="1", offvalue="0")
-        elif sc and sc[3] == "choice":
-            w = ttk.Combobox(parent, textvariable=var, values=sc[4], state="readonly", width=14)
-        elif sc and sc[3] == "combo":
-            w = ttk.Combobox(parent, textvariable=var, values=sc[4], width=14)
-        else:
-            w = ttk.Entry(parent, textvariable=var, width=24)
-        w.grid(row=r, column=1, sticky="w", pady=2)
-
-    for name in ("Gameplay", "Video", "Input", "Debug"):
-        inner = scrolled(stabs[name]) if name == "Input" else stabs[name]
-        r = 0
-        for key, tab, label, *_ in SETTINGS:
-            if tab == name:
-                widget_for(inner, key, label, r)
-                r += 1
-        if name == "Input":
-            ttk.Label(inner, style="Muted.TLabel", wraplength=520,
-                      text="Keys: a letter or digit, or up down left right enter backspace tab space lshift rshift "
-                           "lctrl rctrl lalt ralt comma period slash semicolon num0..num9 none. Two keys separated "
-                           "by a comma.").grid(row=r, column=0, columnspan=2, sticky="w", pady=6)
-        if name == "Debug":
-            dbg = ttk.Frame(stabs["Debug"])
-            dbg.grid(row=r, column=0, columnspan=2, sticky="w", pady=(12, 0))
-
-    dc = tk.BooleanVar(value=C.get("debug_console", False))
-    ttk.Checkbutton(dbg, text="Show the console window while playing", variable=dc).pack(anchor="w", pady=2)
-    dflags = {}
-    for flag, text in DEBUG_FLAGS:
-        v = tk.BooleanVar(value=flag in C.get("debug_flags", []))
-        dflags[flag] = v
-        ttk.Checkbutton(dbg, text="%s   %s" % (flag, text), variable=v).pack(anchor="w", pady=2)
-    ttk.Label(dbg, style="Muted.TLabel", wraplength=560,
-              text="The console window and log flags are launcher options, not part of bmx2.ini. Without the "
-                   "console, the game's messages go to bmx2.log in the game folder.").pack(anchor="w", pady=8)
-
-    allinner = scrolled(stabs["All settings"])
-
-    def fill_all():
-        for w in allinner.winfo_children():
-            w.destroy()
-        for r, key in enumerate(sorted(svars)):
-            widget_for(allinner, key, key, r)
-
-    fill_all()
-
-    def save_settings():
-        vals = {k: v.get().strip() for k, v in svars.items() if v.get().strip() != ""}
-        for k, v in vals.items():
-            if not valid_setting(k, v):
-                messagebox.showerror("Settings", "%s: \"%s\" is not a valid value." % (k, v))
-                return
-        write_ini(P.ini, vals)
-        with C.lock:
-            C.d["debug_console"] = bool(dc.get())
-            C.d["debug_flags"] = [f for f, v in dflags.items() if v.get()]
-            C.save()
-        log("settings saved to %s (used the next time the game starts)" % P.ini)
-
-    def reset_settings():
-        if not messagebox.askyesno("Settings", "Put every setting back to its default?"):
-            return
-        for k, sc in SCHEMA.items():
-            svars.setdefault(k, tk.StringVar()).set(sc[5])
-
-    def reload_settings():
-        for k, v in read_ini(P.ini).items():
-            svars.setdefault(k, tk.StringVar()).set(v)
-        fill_all()
-
-    sbtn = ttk.Frame(s)
-    sbtn.pack(fill="x", pady=(8, 0))
-    ttk.Button(sbtn, text="Save", command=save_settings).pack(side="left")
-    ttk.Button(sbtn, text="Reset to defaults", command=reset_settings).pack(side="left", padx=6)
-    ttk.Button(sbtn, text="Reload", command=reload_settings).pack(side="left")
-    ttk.Label(sbtn, text="(edits %s)" % P.ini, style="Muted.TLabel").pack(side="left", padx=8)
-
-    # ---- plumbing
-    def refresh():
-        set_icon()
-        if not busy.is_set() and adopt_disc(P, C):
-            disc_var.set(C.get("disc", ""))
-            log("found your game: %s" % C.get("disc"))
-        first_bad = None
-        for key, label, ok, tab in status(P, C):
-            rows[key].configure(text=("✓  " if ok else "✗  ") + label, foreground=pal["ok"] if ok else pal["bad"])
-            rows[key].bind("<Button-1>", lambda e, t=tab: nb.select(tabs[t]))
-            if not ok:
-                first_bad = first_bad or tab
-        play_btn.configure(state="normal" if (ready_to_play(P, C) and not busy.is_set()) else "disabled")
-        proj = "your own copy (bmx2recomp)" if is_working_copy(P) else C.get("tag", "installed" if project_ok(P) else "not downloaded")
-        ver.configure(text="launcher %s" % LAUNCHER_VERSION)
-        info.configure(text="Project: %s\nBuild tools: %s\nGame folder: %s" % (
-            proj, "installed" if toolchain_ok(P) else "not downloaded", P.game))
-        d = disc_var.get().strip()
-        if d:
-            try:
-                check_disc(C, d)
-                disc_msg.configure(text="Game found: %s" % os.path.basename(resolve_image(d)), foreground=pal["ok"])
-            except (Fail, OSError) as e:
-                disc_msg.configure(text=str(e), foreground=pal["bad"])
-        else:
-            disc_msg.configure(text="No game image yet: put yours in the \"Dave Mirra 2\" folder.", foreground=pal["muted"])
-        return first_bad
-
-    def work(fn, done_msg):
-        if busy.is_set():
-            return
-        busy.set()
-        for bt in buttons:
-            bt.configure(state="disabled")
-        bar.configure(mode="indeterminate")
-        bar.start(12)
-
-        def target():
-            try:
-                fn()
-                q.put(("done", done_msg))
-            except (Fail, OSError) as e:
-                q.put(("error", str(e)))
-            except Exception as e:      # keep the window alive on a bug
-                q.put(("error", "unexpected error: %r" % e))
-        threading.Thread(target=target, daemon=True).start()
-
-    def progress(done, total):
-        q.put(("progress", (done, total)))
-
-    def do_download():
-        def f():
-            install_toolchain(P, log)
-            install_project(P, C, log)
-        work(f, "Download finished.")
-
-    def do_build():
-        C.set("disc", disc_var.get().strip())
-        work(lambda: build_all(P, C, C.get("disc"), log, progress), "Build finished.")
-
-    def do_play():
-        try:
-            play(P, C, log)
-        except (Fail, OSError) as e:
-            messagebox.showerror("Play", str(e))
-            return
-        if close_var.get():
-            win.after(500, win.destroy)
-
-    play_btn.configure(command=do_play)
-    build_btn.configure(command=do_build)
-    dl_btn.configure(command=do_download)
-    up_btn.configure(command=lambda: work(lambda: install_project(P, C, log), "Project check finished."))
-    ul_btn.configure(command=lambda: work(lambda: update_launcher(P, C, log), "Launcher check finished."))
-
-    def check_updates():
-        q.put(("latest", latest_tag(lambda s: None)))
-    threading.Thread(target=check_updates, daemon=True).start()
-
-    def pump():
-        try:
-            while True:
-                kind, val = q.get_nowait()
-                if kind == "log":
-                    logbox.configure(state="normal")
-                    logbox.insert("end", val + "\n")
-                    logbox.see("end")
-                    logbox.configure(state="disabled")
-                elif kind == "progress":
-                    bar.stop()
-                    bar.configure(mode="determinate", maximum=max(1, val[1]), value=val[0])
-                elif kind == "latest":
-                    have = C.get("tag")
-                    if val and have and version_tuple(val) and (version_tuple(have) or (0,)) < version_tuple(val):
-                        upd_note.configure(text="A newer project version is available: %s (Update tab)." % val)
-                elif kind in ("done", "error"):
-                    busy.clear()
-                    bar.stop()
-                    bar.configure(mode="determinate", value=0)
-                    for bt in buttons:
-                        bt.configure(state="normal")
-                    if kind == "error":
-                        log("ERROR: " + val)
-                        messagebox.showerror("Dave Mirra 2 launcher", val)
-                    else:
-                        log(val)
-                    refresh()
-        except queue.Empty:
-            pass
-        win.after(100, pump)
-
-    apply_theme(dark_var.get())
-    win.bind("<FocusIn>", lambda e: refresh() if e.widget is win else None)   # picks up a game just dropped in the folder
-    first = refresh()
-    nb.select(tabs["Play"] if ready_to_play(P, C) else tabs[first or "Update"])
-    pump()
-    if notice:
-        log("ERROR: " + notice)
-        win.after(300, lambda: messagebox.showerror("Dave Mirra 2 launcher", notice))
-    win.mainloop()
-    return 0
+def message_box(text):
+    """Say something when started without a console (a double click), where nothing printed is seen."""
+    try:
+        import ctypes
+        ctypes.windll.user32.MessageBoxW(None, text, GAME_NAME, 0x40)
+    except (OSError, AttributeError, ImportError):
+        pass
 
 
 def main(argv):
-    if sys.stdout is None:          # packaged without a console window
-        sys.stdout = sys.stderr = open(os.devnull, "w")
-    cmds = {"status", "download", "update", "build", "play", "update-launcher", "-h", "--help", "help"}
+    attach_std_streams()
+    cmds = {"status", "prepare", "download", "update", "build", "play", "run", "update-launcher", "-h", "--help", "help"}
     if any(a in cmds for a in argv):
         return cli(argv)
-    root = argv[argv.index("--root") + 1] if "--root" in argv and argv.index("--root") + 1 < len(argv) else None
-    disc = argv[argv.index("--disc") + 1] if "--disc" in argv and argv.index("--disc") + 1 < len(argv) else None
-    notice = None
-    if disc:
-        try:
-            open_session(root, disc)
-        except (Fail, OSError) as e:
-            notice = str(e)
-    return gui(root or default_root(), notice=notice)
+    # no command (a double click, or RecompLauncher with Easy Setup skipped): start the game when it is built
+    try:
+        disc = next((a[len("--disc="):] for a in argv if a.startswith("--disc=")), None)
+        root = argv[argv.index("--root") + 1] if "--root" in argv and argv.index("--root") + 1 < len(argv) else None
+        P, C = open_session(root, disc)
+        if ready_to_play(P, C):
+            return play(P, C, lambda s: print(s, flush=True), wait=True)
+        message = ("The game is not set up yet. Install it with RecompLauncher (recomplauncher.com), "
+                   "which builds it from your own disc, or run this program with "
+                   "--disc=<your disc image> prepare --accept-downloads.")
+    except (Fail, OSError) as e:
+        message = "%s cannot start: %s" % (GAME_NAME, e)
+    print(message, flush=True)
+    message_box(message)
+    return 1
 
 
 if __name__ == "__main__":
