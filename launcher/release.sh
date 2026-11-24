@@ -18,8 +18,9 @@ if [ "$TRY_RELEASE" != 1 ]; then
     [ -z "$(G status --porcelain --untracked-files=no)" ] || { echo "the working tree has changes: commit them first" >&2; exit 2; }
     [ "$(G rev-parse "$V^{commit}" 2>/dev/null)" = "$HEAD" ] || { echo "tag $V is not on HEAD" >&2; exit 2; }
     # on GitHub the tag must name this commit too (^{} is an annotated tag's commit; a plain tag has none)
-    REMOTE=$(G ls-remote origin "refs/tags/$V^{}" | cut -f1)
-    [ -n "$REMOTE" ] || REMOTE=$(G ls-remote origin "refs/tags/$V" | cut -f1)
+    REFS=$(G ls-remote --tags origin)   # matched exactly: ls-remote's own patterns also match the end of longer names
+    REMOTE=$(printf '%s\n' "$REFS" | awk -v r="refs/tags/$V^{}" '$2 == r { print $1 }')
+    [ -n "$REMOTE" ] || REMOTE=$(printf '%s\n' "$REFS" | awk -v r="refs/tags/$V" '$2 == r { print $1 }')
     [ "$REMOTE" = "$HEAD" ] || { echo "tag $V on origin is ${REMOTE:-missing}, not HEAD: push the tag" >&2; exit 2; }
 fi
 OUT=${2:-$(dirname -- "$0")/dist}
