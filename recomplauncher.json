@@ -1,0 +1,164 @@
+{
+  "$schema": "https://recomplauncher.com/schema/recomplauncher.json",
+  "format": 1,
+  "name": "Dave Mirra Freestyle BMX 2",
+  "repo": "ADHD-TISM/Dave-Mirra-2-Recomp",
+  "inputs": [
+    {
+      "id": "game",
+      "label": "Your Dave Mirra Freestyle BMX 2 disc image (USA, SLUS-20159, version 1.00): a .bin with its .cue, or an .iso.",
+      "formats": [{ "type": "file", "extensions": ["bin", "cue", "iso"] }],
+      "check": { "iso9660": "SLUS_201.59" }
+    }
+  ],
+  "start": {
+    "program": ["Dave Mirra Freestyle BMX 2.exe"],
+    "args": ["--root", "{data}", "--disc={input:game}", "run"]
+  },
+  "prepare": {
+    "program": ["Dave Mirra Freestyle BMX 2.exe"],
+    "args": ["--root", "{data}", "--disc={input:game}", "prepare"],
+    "label": "Translating the game's code from your disc and building it",
+    "done": ["{data}/game/bmx2.exe"],
+    "options": [
+      {
+        "id": "downloads",
+        "label": "Download the build tools and the project's source",
+        "note": "From GitHub and python.org, kept in the game's folder: this project's source, the llvm-mingw C compiler and a small Python (about 200 MB).",
+        "required": true,
+        "args": ["--accept-downloads"]
+      }
+    ]
+  },
+  "config": [
+    {
+      "id": "main",
+      "format": "ini",
+      "file": [{ "path": "{data}/game/bmx2.ini" }]
+    }
+  ],
+  "settings": [
+    {
+      "id": "scale", "label": "Internal resolution", "group": "Picture",
+      "help": "How sharp the 3D is drawn. 1x is the PS2's own; 2x to 4x also smooth the edges.",
+      "choices": [
+        { "label": "1x (original)", "set": { "scale": "1" } },
+        { "label": "2x", "set": { "scale": "2" } },
+        { "label": "3x", "set": { "scale": "3" } },
+        { "label": "4x", "set": { "scale": "4" } }
+      ],
+      "defaults": { "scale": "2" }
+    },
+    {
+      "id": "fullscreen", "label": "Window mode", "group": "Picture",
+      "help": "F11 or Alt+Enter switches while playing.",
+      "choices": [
+        { "label": "Window", "set": { "fullscreen": "0" } },
+        { "label": "Fullscreen", "set": { "fullscreen": "1" } }
+      ],
+      "defaults": { "fullscreen": "0" }
+    },
+    {
+      "id": "widescreen", "label": "Widescreen", "group": "Picture",
+      "help": "A wider 3D view shown at 16:9. Menus and on-screen text are stretched.",
+      "choices": [
+        { "label": "Off (4:3)", "set": { "widescreen": "0" } },
+        { "label": "16:9", "set": { "widescreen": "1" } }
+      ],
+      "defaults": { "widescreen": "0" }
+    },
+    {
+      "id": "aspect", "label": "Picture shape", "group": "Picture",
+      "choices": [
+        { "label": "Console shape (black bars)", "set": { "aspect": "4:3" } },
+        { "label": "Fill the window", "set": { "aspect": "stretch" } }
+      ],
+      "defaults": { "aspect": "4:3" }
+    },
+    {
+      "id": "filter", "label": "Picture filter", "group": "Picture",
+      "help": "How the picture is enlarged to the window.",
+      "choices": [
+        { "label": "Smooth", "set": { "filter": "smooth" } },
+        { "label": "Sharp pixels", "set": { "filter": "nearest" } }
+      ],
+      "defaults": { "filter": "smooth" }
+    },
+    {
+      "id": "vsync", "label": "V-Sync", "group": "Picture",
+      "help": "Shows frames in step with a 60 or 120 Hz screen, which is smoother.",
+      "choices": [
+        { "label": "On", "set": { "vsync": "1" } },
+        { "label": "Off", "set": { "vsync": "0" } }
+      ],
+      "defaults": { "vsync": "1" }
+    },
+    {
+      "id": "vsync_two_chip", "label": "V-Sync on two-chip laptops", "group": "Picture", "advanced": true,
+      "help": "When another graphics chip drives the screen: Off may tear, On may stutter. Needs V-Sync on.",
+      "choices": [
+        { "label": "Off", "set": { "vsync_two_chip": "0" } },
+        { "label": "On", "set": { "vsync_two_chip": "1" } }
+      ],
+      "defaults": { "vsync_two_chip": "0" }
+    },
+    {
+      "id": "intro", "label": "Intro movies", "group": "Game",
+      "help": "The start-up movies. The Acclaim and Z-Axis logos still show for 2 seconds each.",
+      "choices": [
+        { "label": "Play them", "set": { "skip_intro": "0" } },
+        { "label": "Skip them", "set": { "skip_intro": "1" } }
+      ],
+      "defaults": { "skip_intro": "0" }
+    },
+    {
+      "id": "volume", "label": "Volume", "group": "Game",
+      "help": "The game's sound in percent: music, effects and movie sound.",
+      "slider": { "key": "volume", "min": 0, "max": 100, "step": 5, "format": "%.0f" },
+      "defaults": { "volume": "100" }
+    },
+    {
+      "id": "gamepad", "label": "Gamepad", "group": "Controls",
+      "help": "An Xbox-style gamepad as the PS2 pad: A is Cross, B Circle, X Square, Y Triangle.",
+      "choices": [
+        { "label": "On", "set": { "gamepad": "1" } },
+        { "label": "Keyboard only", "set": { "gamepad": "0" } }
+      ],
+      "defaults": { "gamepad": "1" }
+    },
+    {
+      "id": "rumble", "label": "Vibration", "group": "Controls",
+      "help": "Also needs Vibration: On in the game's Options > Controller.",
+      "choices": [
+        { "label": "On", "set": { "rumble": "1" } },
+        { "label": "Off", "set": { "rumble": "0" } }
+      ],
+      "defaults": { "rumble": "1" }
+    },
+    {
+      "id": "pad2", "label": "Player 2", "group": "Controls",
+      "help": "For Multiplayer. With one gamepad, give it to player 2 and play player 1 on the keyboard.",
+      "choices": [
+        { "label": "Second gamepad", "set": { "pad2": "gamepad2" } },
+        { "label": "First gamepad", "set": { "pad2": "gamepad1" } },
+        { "label": "Off", "set": { "pad2": "off" } }
+      ],
+      "defaults": { "pad2": "gamepad2" }
+    }
+  ],
+  "saves": ["{data}/game/memcard/mc0", "{data}/game/bmx2.ini"],
+  "folders": {
+    "saves": [{ "path": "{data}/game/memcard" }],
+    "logs": [{ "path": "{data}/game" }]
+  },
+  "actions": [
+    { "id": "saves", "label": "Memory card", "help": "The game's saves, in the folder mc0.", "open": "saves" }
+  ],
+  "looks": {
+    "allowed": false,
+    "reason": "The game is started by the project's own program, so the filters can't reach it. Use the game's own Smooth filter and internal resolution."
+  },
+  "system": {
+    "windows": { "version": "10", "graphics": { "opengl": "3.3" } }
+  }
+}

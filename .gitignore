@@ -5,6 +5,7 @@
 !/.gitignore
 !/LICENSE
 !/README.md
+!/recomplauncher.json
 !/bmx2recomp/
 !/launcher/
 
@@ -23,4 +24,5 @@
 /launcher/*
 !/launcher/bmx2launcher.py
 !/launcher/build_exe.sh
+!/launcher/release.sh
 !/launcher/test_launcher.py

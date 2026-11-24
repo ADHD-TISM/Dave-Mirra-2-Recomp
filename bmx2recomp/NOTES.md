@@ -29,6 +29,31 @@ laptops"). After v0.1.8: bmx2.exe gets the game's icon and name (see "Exe
 icon and name"). Next: playtest (see "Next step"). The State sections below
 are older snapshots, kept for history.
 
+## RecompLauncher instead of the launcher window (2026-11-24)
+- The user asked to remove the launcher and use RecompLauncher
+  (github.com/elripalda/RecompLauncher, docs/ADD-SUPPORT.md and DEVELOPERS.md).
+  The guide says to keep the project's own installer, so bmx2launcher.py
+  stays as the one program players get ("Dave Mirra Freestyle BMX 2.exe"),
+  without its Tk window: `--root DIR --disc=FILE prepare [--accept-downloads]`
+  is the setup step (progress lines, exit 3 when downloads are needed but not
+  allowed, "Already built" when nothing changed), `run [game args]` starts
+  the game and returns its exit code, and no command starts a built game or
+  shows a message box. release.sh packs the project version into the exe
+  (release_tag.txt), so prepare installs that tag.
+- recomplauncher.json: input `game` (iso9660 SLUS_201.59; .bin/.cue/.iso),
+  start/prepare with `--root {data}` (everything under recompdata: tools,
+  project, work, game), required option `--accept-downloads`, done
+  {data}/game/bmx2.exe, config = {data}/game/bmx2.ini (ini, no sections),
+  12 settings from the old Settings tab, saves = memcard/mc0 + bmx2.ini,
+  looks off (ReShade would sit beside the wrong exe), no dumps (not checked
+  against Redump), Windows 10 + OpenGL 3.3. Checked with a small draft-07
+  checker against the official schema (0 errors; the 3 official examples
+  also pass). Not in the RecompLauncher catalog yet (badge links the site).
+- runtime/main.c: RECOMPLAUNCHER_MODE=bigpicture starts fullscreen.
+- Not done (Recomp Standards): CHD input (PS2 DVD CHDs use lzma/zlib/huff/
+  flac hunks, medium), a Linux build, Recomp Achievements, dumps values.
+  Not tried inside RecompLauncher itself.
+
 ## Exe icon and name (2026-11-23)
 - The disc's ASSETS/ICON.DAT (the memory card icon, the same bytes as the
   save's bmxicon.ico) is a PS2 icon: header 0x00010000, 1 shape, texture
