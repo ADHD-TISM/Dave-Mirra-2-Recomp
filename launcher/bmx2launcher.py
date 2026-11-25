@@ -964,8 +964,8 @@ def compile_game(P, C, log, progress=None):
     except OSError:
         os.remove(tmp)
         raise Fail("%s is in use: close the game and build again" % EXE_FILE)
+    C.set("build_chd", any(os.path.basename(p) == "libchdr_all.c" for p in src))   # before build_key: built_ok trusts it
     C.set("build_key", build_key(P))
-    C.set("build_chd", any(os.path.basename(p) == "libchdr_all.c" for p in src))
     log("game built: %s" % P.exe)
 
 
@@ -982,7 +982,7 @@ def build_all(P, C, disc, log, progress=None):
 
 KEYNAMES = ("up down left right enter backspace tab space lshift rshift lctrl rctrl lalt ralt "
             "comma period slash semicolon num0 num1 num2 num3 num4 num5 num6 num7 num8 num9 f1-f12 return escape shift ctrl alt "
-            "\"mouse left\" \"mouse right\" \"mouse middle\" \"mouse 4\" \"mouse 5\" none").split()
+            "none").split() + ["mouse left", "mouse right", "mouse middle", "mouse 4", "mouse 5"]   # f1-f12: F1 to F12
 B01 = ["0", "1"]
 
 # (key, tab, label, kind, choices, default, comment)

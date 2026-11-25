@@ -19,4 +19,10 @@ uint32_t chd_disc_sectors(void);
 int chd_disc_read(uint32_t lsn, uint8_t *out);
 
 void chd_disc_close(void);
+
+/* Parses one CD track metadata text (v2 = CHT2, else CHTR) for track 1: frames = data sectors, lead = stored
+ * pregap frames before LSN 0, off = data offset in a sector (-1 = by its mode byte). 1, or -1 with err.
+ * Used by chd_disc_open; separate so tools/test_chd_disc.c can feed it hostile text. */
+int chd_disc_parse_track1(const char *meta, int v2, char *err, size_t errlen,
+                          uint32_t *frames, uint32_t *lead, int *off);
 #endif

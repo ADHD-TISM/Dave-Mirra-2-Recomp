@@ -97,6 +97,15 @@ are older snapshots, kept for history.
   headers; Alt and F10 as pad keys no longer open the window's system menu
   (WM_SYSCOMMAND SC_KEYMENU, WM_SYSCHAR); --image keeps argv when the full
   path does not fit 4096 bytes.
+- Round 2: the CHT2/CHTR text comes from the file, so chd_disc.c parses it
+  with its own widths (%31s), never libchdr's CDROM_TRACK_METADATA(2)_FORMAT
+  macros (bare %s: a crafted .chd overflowed the 32-byte buffers). The
+  parse is chd_disc_parse_track1, tested by tools/test_chd_disc.c (build
+  line in the file, with -fsanitize=address; 9 cases incl. 200-character
+  fields). build_exe.sh stops when Python's LICENSE.txt is missing (it also
+  lists OpenSSL, zlib, libffi... that PyInstaller bundles). Old CHCD CHDs:
+  the message says extractcd + createcd (chdman copy keeps the metadata,
+  not checked).
 - Not done (Recomp Standards): a Linux build, Recomp Achievements, dumps values,
   a new pinned compiler is never installed over an old one (toolchain_ok
   only checks the file exists; older than this change).
