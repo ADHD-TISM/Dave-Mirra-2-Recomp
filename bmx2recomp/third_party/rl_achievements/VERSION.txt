@@ -1,0 +1,1 @@
+elripalda/RecompAchievements faf094acdf1efb57d8db7c8187b4b47aa1501805 (2026-11-11): LICENSE, README.md, sdk/include, sdk/src, sdk/third_party (cJSON MIT, rcheevos MIT). Unchanged.

@@ -683,6 +683,28 @@ def test_build_key_does_not_depend_on_the_folder(d):
     check(keys[0] == keys[1], "build_key changed with the folder")
 
 
+def test_recomp_achievements_is_built_and_keyed(d):
+    P = bl.Paths(d)
+    rt, tp = os.path.join(P.project, "runtime"), os.path.join(P.project, "third_party")
+    inc = os.path.join(tp, "rl_achievements", "include")
+    for p in (rt, P.gen, P.gen_iop, P.gen_vu, inc):
+        os.makedirs(p, exist_ok=True)
+    ach, unity, hdr = os.path.join(rt, "achievements.c"), os.path.join(tp, "rl_achievements_all.c"), os.path.join(inc, "rl_achievements.h")
+    for p in (ach, unity, hdr):
+        with open(p, "w") as f:
+            f.write("int x;\n")
+    src, _ = bl._sources(P)
+    check(unity in src and ach in src, "sources: %r" % src)
+    f = bl._flags(P, unity)
+    check("-DRC_DISABLE_LUA" in f and inc in f and "-w" in f, "library flags: %r" % f)
+    check("-DRC_DISABLE_LUA" not in bl._flags(P, ach), "runtime flags got the library's")
+    k1, a1, u1 = bl.build_key(P), bl.source_bytes(ach), bl.source_bytes(unity)
+    with open(hdr, "w") as fh:
+        fh.write("int y;\n")
+    check(bl.source_bytes(ach) != a1 and bl.source_bytes(unity) != u1, "a new header does not rebuild its users")
+    check(bl.build_key(P) != k1, "a new header does not change build_key")
+
+
 @windows_flow
 def test_resources_add_the_manifest_with_or_without_the_icon(d):
     P = bl.Paths(d)

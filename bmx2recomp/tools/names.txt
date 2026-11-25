@@ -30,3 +30,12 @@
 001d9578 padInfoAct  # +0x6a nrOfActuators, act info at +0x30
 001d9698 padInfoComb  # +0x6b numActComb, comb info at +0x40
 001d97b8 padInfoMode  # +0x65 modeCurId (0xf3 = none), +0x68 nrOfModes, modeTable u16 at +0x50
+00165f30 rider_profile_base   # 0x2174b4 + 968 * byte[0x21c41c + 17*player + 3] (17 profiles of 968 bytes at 0x2174a8, header 12)
+00165ef8 level_record         # rider_profile_base(player) + 316 + 68*level: the level's ProQuest record (= 0x2174a8 + 968*rider + 328 + 68*level)
+00173da0 game_mode            # lbu 0x257cb6 (gp-19386)
+0018e390 hud_set_score        # 'InGameUI.Overlay.LabelScore'; stores the shown score (float, 2^32 = none) at 0x25bc28 (gp-3144)
+001adf60 cheat_sniffer        # 'CheatSniffer.KeyIndex'; 32-digit ring at 0x246568, codes at 0x246540, matched digits zeroed, effects via 0x2509c0
+001afe58 levelselect_proquest_info  # level select panel: respect P+156+4*lv of 5,000; R+60 bit0 unlocked bit1 comp open bit4 objectives done; R+63 medal; R+64 gaps
+001892e8 objectives_text      # 'KSTRSP_GOAL_LEV%02d_%s_%d': tier R+61 (ROOKIE..EXPERT), goal bytes R+12*tier+3*i, goals per tier at 0x2566d0 (1,4,4,4,1)
+0017f8d0 goal_progress        # goal byte +1 (low 5 bits = count); at the goal's target: R+62 (goals done in tier) +1, goal byte |= 0x40 (EE_WATCH, frame 12417)
+00181f58 tier_recount         # per level record: R+61 = 0, R+62 = 0, counts objective bytes with bit 0x40 (sb 62 at 1820ec), moves R+61 on while R+62 >= goals per tier (sb 61 at 18232c)

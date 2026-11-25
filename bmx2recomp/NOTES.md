@@ -210,8 +210,9 @@ are older snapshots, kept for history.
   lists OpenSSL, bzip2, libffi, Zstandard, Tcl/Tk). Old CHCD CHDs:
   the message says extractcd + createcd (chdman copy keeps the metadata,
   not checked).
-- Not done (Recomp Standards): Recomp Achievements (started in its own
-  session, 2026-11-24). The Linux build: see "Linux (2026-11-25)".
+- Recomp Standards: the Linux build (see "Linux (2026-11-25)") and Recomp
+  Achievements (see "Achievements") were made in their own sessions and
+  merged into claude/early-wip on 2026-11-25.
 - Done since v0.2.1: dumps = Redump disc 12389 (USA 1.00 / Greatest Hits,
   1 track Mode 2, 720728064 bytes, CRC32 f37eefca = the user's .bin), for
   RecompLauncher's verified badge (only a .bin matches; .iso/.chd still
@@ -258,6 +259,82 @@ are older snapshots, kept for history.
   a removed and re-added entry keeps its old "set up" state until Game
   Settings > Setup Options runs setup again; its Discord hook logs the setup
   step as "started outside the launcher" (same exe for prepare and start).
+
+## Achievements (2026-11-25)
+Recomp Achievements (github.com/elripalda/RecompAchievements, faf094a) is
+vendored unchanged in third_party/rl_achievements (Recomp Achievements
+License 1.0: free for games, launchers need the author's permission;
+rcheevos and cJSON MIT), built as third_party/rl_achievements_all.c by
+build.sh and the launcher (LAUNCHER_VERSION 10: an older launcher run from
+source would not build it and fail to link). It is in bmx2.exe only, not in
+the launcher program, so THIRD_PARTY_NOTICES is unchanged.
+- An events list: ../achievements.json (12 achievements, for RecompLauncher
+  to host; "game" id and "versions" >=0.2.2 are guesses until the recomp is
+  in its catalog). runtime/achievements.c fires the events from checks on
+  game memory once per vblank (kernel.c ee_event -> ach_vsync): a 16 KB
+  compare of the rider profiles, a 32-byte loop, one float; no getenv.
+  rl_ach_init("ps2", main RAM reader) reads RL_SESSION once; without it the
+  library sends nothing, and every event still logs "ach: <name> (frame N)".
+- Profiles count only while the game runs: the first 600 frames (boot), 300
+  frames after the game reads BMX2SAVE.DAT (mc.c -> ach_save_read, which also
+  sends save_loaded; the game reads it at boot when it exists) and the frame
+  of a cheat code take the profiles as the new baseline.
+- Cheats: CheatSniffer (fn_001adf60) appends '1'..'5' to a 32-byte ring at
+  0x246568 and zeroes the matched digits when a code matches; nothing else
+  writes the ring, so fewer non-zero bytes than last frame = a code fired ->
+  rl_ach_casual("cheats").
+- Memory (P = 0x2174a8 + 968 * rider, 17 riders; R = P + 328 + 68 * level,
+  8 levels, Woodward Camp = 2; functions named in tools/names.txt):
+  - Score: float at 0x25bc28 (gp-3144), written by hud_set_score
+    (fn_0018e390, 'InGameUI.Overlay.LabelScore'); 2^32 = none shown. Ride
+    time left in frames at 0x25bc38. Found by matching the HUD numbers in
+    screenshots (4900, 9680, 15430) against EE dumps (EE_DUMP_EVERY).
+  - Objectives: byte R + 12*tier + 3*i, low 5 bits = progress, bit 0x40 =
+    done; goals per tier 1,4,4,4,1 (table 0x2566d0); R+61 tier (Rookie,
+    Amateur, Pro, Hardcore, Expert), R+62 done in tier (objectives_text
+    fn_001892e8, goal_progress fn_0017f8d0, tier_recount fn_00181f58). An
+    EE_WATCH on R+0 caught goal_progress writing 0xe1 at frame 12417, when
+    the scripted ride passed 10,000 points (the Rookie goal "clear 10,000
+    points in a single run"); R+62 went 0 -> 1 at the same time.
+  - levelselect_proquest_info (fn_001afe58): P+156+4*level respect ("N OUT
+    OF 5,000"), R+60 bit 0 unlocked / bit 1 competition open / bit 4
+    objectives done ($KSTRSP_OBJCTV_DONE), R+63 medal (None, Bronze, Silver,
+    Gold), R+64 gap bits (counted for "N OUT OF M").
+- Events (achievements.json id, event, check):
+  1 first_trick: score goes from none/0 to > 0.
+  2 rookie_objective: tier 0's objective byte gets 0x40.
+  3-5 amateur/pro/hardcore_objectives: every objective byte of tier 1/2/3
+    gets 0x40 (not R+61/R+62: tier_recount clears and recounts them in one
+    pass, a vblank in it could show the new tier with the old count).
+  6 level_unlocked: R+60 bit 0 rises on a level other than Woodward Camp.
+  7 first_gap: a new bit in R+64.  8 medal: R+63 rises to 1-3.
+  9 gold_medal: R+63 becomes 3.  10 max_respect: respect reaches 5000.
+  11 big_run: score >= 25,000 (bonus).
+  12 proquest_master: R+60 bit 4 on all 8 levels of one rider (win).
+- Checked (scripted, turbo, test folders in the scratchpad, never game\):
+  - The ProQuest ride (route in "Pad" + random jumps and tricks, seed 1):
+    first_trick at frame 8212, rookie_objective at 12418, through
+    tools/fake_rl.py (a stand-in for the launcher's pipe: hello, list_ok,
+    event messages, matched against achievements.json).
+  - Events 3-12 with EE_POKE (main.c: frame:addr:byte, written before the
+    vblank checks) during that ride: each fires once at its poke; R+61 = 2
+    with R+62 = 4 (tier moved on, old count) fires nothing; a level unlock
+    poked at frame 300 (boot baseline) fires nothing.
+  - Cheat code 7 at the main menu: casual sent, all levels unlocked, no
+    level_unlocked event. Saving that state (Options > Save Game) and
+    booting again: the game reads the save at boot, save_loaded is sent once,
+    no events.
+  - 12000 frames idle at the main menu: no attract demo, no events.
+- EE_POKE, PAD_SCRIPT or PAD2_SCRIPT set at start: casual("debug") is sent
+  (all unlocks of that session are Casual). Save reads count only for
+  BMX2SAVE.DAT opened read-only (mode 1).
+- Not checked: the real game reaching events 3-12 (needs real play); replay
+  playback (Cool Stuff > Load Replay, BMX2RPLY.DAT, no save_loaded) may
+  drive the HUD score and give first_trick or big_run; whether Freeride or
+  Session show a score with no time limit (big_run says "single run"); RecompLauncher 0.90 Beta 68 itself (it sets RL_SESSION, but
+  the game has no hosted list there and that version has no developer
+  log). game_mode (0x257cb6) stayed 0 through menus and ProQuest, so it
+  cannot gate the checks to "riding".
 
 ## Exe icon and name (2026-11-23)
 - The disc's ASSETS/ICON.DAT (the memory card icon, the same bytes as the
