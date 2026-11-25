@@ -51,7 +51,8 @@ are older snapshots, kept for history.
   the game and returns its exit code, and no command starts a built game or
   shows a message box. release.sh packs the project version into the exe
   (release_tag.txt), so prepare installs that tag.
-- recomplauncher.json: input `game` (iso9660 SLUS_201.59; .bin/.cue/.iso),
+- recomplauncher.json: input `game` (.bin/.cue/.iso, later .chd; the check
+  changed later, see the CHD bullet),
   start/prepare with `--root {data}` (everything under recompdata: tools,
   project, work, game), required option `--accept-downloads`, done
   {data}/game/bmx2.exe, config = {data}/game/bmx2.ini (ini, no sections),
@@ -89,7 +90,12 @@ are older snapshots, kept for history.
   this recomp reads"; its picker accepts them), and a check is per input,
   not per format, so the user chose to drop the check from
   recomplauncher.json: the setup step's own check_disc (open_session, run
-  before any download) now refuses a wrong disc with exit 1 and a message.
+  before any download) now refuses a wrong disc with a message. Then the
+  check became {"ids": ["SLUS-20159"]} (DEVELOPERS.md: a PS2 disc's serial;
+  it is also how RecompLauncher finds the player's copies, which no check
+  loses), to be tried on a .chd in RecompLauncher. A missing or wrong disc
+  makes prepare and run exit 7 (DiscFail), which exit_codes explains
+  (code 1 showed nothing useful in RecompLauncher).
 - Review fixes (CHD round): build_exe.sh writes THIRD_PARTY_NOTICES.txt
   (libchdr, zstd, miniz, LZMA, dr_flac, Python licences) into the program
   and the release zip (BSD/MIT need the notice with a binary); a stored
@@ -108,7 +114,8 @@ are older snapshots, kept for history.
   parse is chd_disc_parse_track1, tested by tools/test_chd_disc.c (build
   line in the file; 12 cases, each long field given alone with 150
   characters and the exact result asserted, which is the guard: ASan on
-  mingw does not see sscanf's writes; every bare-%s mutant fails it). build_exe.sh stops when Python's LICENSE.txt is missing (it also
+  mingw does not see sscanf's writes; every bare-%s mutant fails it).
+  build_exe.sh stops when Python's LICENSE.txt is missing (it also
   lists OpenSSL, bzip2, libffi, Zstandard, Tcl/Tk). Old CHCD CHDs:
   the message says extractcd + createcd (chdman copy keeps the metadata,
   not checked).

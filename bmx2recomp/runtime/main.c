@@ -17,6 +17,7 @@ static int show_window = 1;
  * say so on screen instead of just vanishing. */
 static void missing_code(u32 addr, const char *what) {
     FILE *m = fopen("missing_entries.txt", "a");
+    int wrote = m != NULL;
     if (m) { fprintf(m, "%08x\n", addr); fclose(m); }
     if (show_window) {
         /* the file is in the current folder: the game folder (recompdata\game under RecompLauncher), or disc\ */
@@ -25,8 +26,9 @@ static void missing_code(u32 addr, const char *what) {
         if (!n || n >= sizeof where) snprintf(where, sizeof where, "missing_entries.txt in the game's folder");
         snprintf(msg, sizeof msg, "The game %s %08x, which was not recompiled.\n\n"
                  "Please open an issue on the project's GitHub page with this address and what you were doing.\n\n"
-                 "The address was also written to %s. Developers: add it to extra_ee.txt, run tools/recomp_ee.py "
-                 "and build.sh, and the game will get past this point.", what, addr, where);
+                 "The address %s %s. Developers: add it to extra_ee.txt, run tools/recomp_ee.py "
+                 "and build.sh, and the game will get past this point.", what, addr,
+                 wrote ? "was also written to" : "could not be written to", where);
         MessageBoxA(NULL, msg, "bmx2recomp: missing code", MB_OK | MB_ICONERROR);
     }
     exit(3);

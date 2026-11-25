@@ -259,6 +259,14 @@ def test_a_chd_needs_a_build_that_reads_chd(d):
     expect_fail(lambda: bl.play(P, _FakeConfig(disc=chd), lambda s: None), "cannot read .chd images")
 
 
+def test_a_wrong_or_missing_disc_exits_7(d):
+    iso = os.path.join(d, "other.iso")
+    _make_iso(iso)          # an ISO 9660 image with no SYSTEM.CNF: not this game
+    for args in (["--disc=" + iso, "prepare", "--accept-downloads"], ["--disc=" + os.path.join(d, "gone.iso"), "run"]):
+        code = bl.cli(["--root", os.path.join(d, "root")] + args)
+        check(code == bl.BAD_DISC == 7, "%r gave %r" % (args, code))
+
+
 def test_identify_does_not_cache_a_chdread_failure(d):
     p = os.path.join(d, "game.chd")
     with open(p, "wb") as f:

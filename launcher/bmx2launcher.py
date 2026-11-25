@@ -75,6 +75,10 @@ class Fail(Exception):
     """A step failed; the message says what to do about it."""
 
 
+class DiscFail(Fail):
+    """The chosen disc image is missing or not this game: exit code BAD_DISC, which RecompLauncher explains."""
+
+
 class ChdFail(Fail):
     """chdread.exe is missing or failed: says nothing about which game the image is, so it is not cached."""
 
@@ -488,15 +492,15 @@ def update_launcher(P, C, log):
 def resolve_image(path):
     """The data file behind a .cue (or the .bin/.iso itself)."""
     if not path or not os.path.isfile(path):
-        raise Fail("game image not found: %s" % (path or "(none chosen)"))
+        raise DiscFail("game image not found: %s" % (path or "(none chosen)"))
     if path.lower().endswith(".cue"):
         with open(path, encoding="utf-8", errors="replace") as f:
             m = re.search(r'^\s*FILE\s+"(.+?)"', f.read(), re.M | re.I)
         if not m:
-            raise Fail("%s has no FILE line" % os.path.basename(path))
+            raise DiscFail("%s has no FILE line" % os.path.basename(path))
         b = os.path.join(os.path.dirname(os.path.abspath(path)), m.group(1))
         if not os.path.isfile(b):
-            raise Fail("%s names %s, which is not next to it" % (os.path.basename(path), m.group(1)))
+            raise DiscFail("%s names %s, which is not next to it" % (os.path.basename(path), m.group(1)))
         return b
     return path
 
@@ -550,7 +554,7 @@ class Image:
         elif n % 2048 == 0:
             self.ss = 2048
         else:
-            raise Fail("%s is not a disc image (its size fits neither .bin nor .iso sectors)" % os.path.basename(self.path))
+            raise DiscFail("%s is not a disc image (its size fits neither .bin nor .iso sectors)" % os.path.basename(self.path))
         self.f = open(self.path, "rb")
 
     def _chdread(self, *args):
@@ -660,7 +664,7 @@ def check_disc(C, path):
     """Raise Fail unless path is this game."""
     have = identify(C, path)
     if have != GAME_EXE:
-        raise Fail("this image is %s, not %s (%s)" % (("a disc that boots " + have) if have else "not a PS2 game disc",
+        raise DiscFail("this image is %s, not %s (%s)" % (("a disc that boots " + have) if have else "not a PS2 game disc",
                                                      GAME_NAME, GAME_SERIAL))
 
 
@@ -1171,6 +1175,7 @@ def open_session(root, disc=None):
 
 
 NEEDS_DOWNLOADS = 10    # prepare's exit code; the game's own codes (3, 4, 5, 6) mean something else
+BAD_DISC = 7            # prepare and run: the disc image is missing or another game (recomplauncher.json exit_codes)
 
 
 def prepare(P, C, accept, log):
@@ -1254,6 +1259,9 @@ def cli(argv):
     root, disc, accept, cmd = parse_args(argv)
     try:
         P, C = open_session(root, disc)
+    except DiscFail as e:
+        print("error: %s" % e, flush=True)
+        return BAD_DISC
     except (Fail, OSError) as e:
         print("error: %s" % e, flush=True)
         return 1
@@ -1283,6 +1291,9 @@ def cli(argv):
         else:
             print(__doc__)
             return 2
+    except DiscFail as e:
+        print("error: %s" % e, flush=True)
+        return BAD_DISC
     except (Fail, OSError) as e:
         print("error: %s" % e, flush=True)
         return 1
