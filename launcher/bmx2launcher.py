@@ -347,9 +347,10 @@ def latest_tag(log, strict=False):
 
 
 TOOL_MARK = "bmx2-tools-version.txt"     # in tools/llvm-mingw and tools/python: which pinned version is there
-# the only versions pinned before the marks existed (v0.2.1 and older): an unmarked install of them is kept
+# the only versions pinned before the marks existed (v0.2.1 and older): an unmarked install of them is kept.
+# Never change these on a version bump: an unmarked folder must not pass for a newer compiler or Python.
 UNMARKED = {"llvm": "llvm-mingw-20261104-ucrt-x86_64", "python": "python-3.12.8-embed-amd64"}
-PY_NAME = PY_URL.rsplit("/", 1)[1][:-len(".zip")]     # python-3.12.8-embed-amd64
+PY_NAME = os.path.splitext(PY_URL.rsplit("/", 1)[1])[0]     # python-3.12.8-embed-amd64
 
 
 def _tool_current(folder, tool_file, kind, want):
@@ -361,21 +362,37 @@ def _tool_current(folder, tool_file, kind, want):
     try:
         with open(mark, encoding="utf-8") as f:
             return f.read().strip() == want
-    except OSError:
-        pass
+    except FileNotFoundError:
+        pass                    # unmarked: see below
+    except (OSError, ValueError):
+        return False            # a mark that cannot be read: install again
     if UNMARKED[kind] != want:
         return False
     try:
-        with open(mark, "w", encoding="utf-8") as f:
-            f.write(want + "\n")
+        _mark_tool(folder, want)
     except OSError:
         pass
     return True
 
 
 def _mark_tool(folder, name):
-    with open(os.path.join(folder, TOOL_MARK), "w", encoding="utf-8") as f:
+    """Write the mark in one step (a half-written mark would cost a full download)."""
+    mark = os.path.join(folder, TOOL_MARK)
+    with open(mark + ".new", "w", encoding="utf-8") as f:
         f.write(name + "\n")
+    os.replace(mark + ".new", mark)
+
+
+def compiler_id(P):
+    """Which compiler builds the objects, for their cache keys: the pinned llvm-mingw, or for a developer's own
+    (BMX2_CLANG) its size and date, so a new compiler at the same path recompiles everything."""
+    if os.environ.get("BMX2_CLANG"):
+        try:
+            st = os.stat(P.clang)
+            return "own %d %d" % (st.st_size, st.st_mtime_ns)
+        except OSError:
+            return "own missing"
+    return LLVM_NAME
 
 
 def compiler_current(P):
@@ -946,7 +963,7 @@ def compile_game(P, C, log, progress=None):
         tag = os.path.basename(os.path.dirname(p)) + "_" + os.path.basename(p)     # runtime_main.c, gen_code_000.c
         o = os.path.join(P.obj, tag[:-2] + ".o")
         objs.append(o)
-        k = key_of(hh, " ".join(_flags(P, p)), P.clang, source_bytes(p))
+        k = key_of(hh, " ".join(_flags(P, p)), P.clang, compiler_id(P), source_bytes(p))
         newkeys[tag] = k
         if not (os.path.isfile(o) and keys.get(tag) == k):
             todo.append((tag, p, o))

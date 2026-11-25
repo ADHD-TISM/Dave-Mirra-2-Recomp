@@ -259,6 +259,9 @@ def test_a_newer_pinned_compiler_is_installed_over_an_old_one(d):
     old_env = os.environ.pop("BMX2_CLANG", None)
     old_name = bl.LLVM_NAME
     try:
+        check(bl.UNMARKED == {"llvm": "llvm-mingw-20261104-ucrt-x86_64", "python": "python-3.12.8-embed-amd64"},
+              "UNMARKED is frozen: never change it on a version bump")
+        bl.LLVM_NAME = bl.UNMARKED["llvm"]
         check(bl.compiler_current(P), "an unmarked install from v0.2.1 or older is kept")
         with open(mark, encoding="utf-8") as f:
             check(f.read().strip() == bl.LLVM_NAME, "and it gets its mark")
@@ -266,13 +269,50 @@ def test_a_newer_pinned_compiler_is_installed_over_an_old_one(d):
         check(not bl.compiler_current(P) and not bl.toolchain_ok(P), "a newer pinned compiler is not current")
         os.remove(mark)
         check(not bl.compiler_current(P), "an unmarked install is not taken for a newer pinned compiler")
+        with open(mark, "wb") as f:
+            f.write(bytes([0xff, 0xfe]) + b" junk")
+        check(not bl.compiler_current(P), "an unreadable mark means install again, not a crash")
+        old_id = bl.compiler_id(P)
+        bl.LLVM_NAME = "llvm-mingw-21000101-ucrt-x86_64"
+        check(bl.compiler_id(P) != old_id, "a new pinned compiler changes the object keys, so everything recompiles")
         os.environ["BMX2_CLANG"] = P.clang
         check(bl.compiler_current(P), "a developer's own compiler (BMX2_CLANG) is never replaced")
+        own = bl.compiler_id(P)
+        with open(P.clang, "w") as f:
+            f.write("a newer compiler at the same path")
+        check(bl.compiler_id(P) != own, "a new own compiler at the same path recompiles everything")
     finally:
         bl.LLVM_NAME = old_name
         os.environ.pop("BMX2_CLANG", None)
         if old_env is not None:
             os.environ["BMX2_CLANG"] = old_env
+
+
+def test_install_toolchain_marks_a_new_pinned_compiler_and_python(d):
+    P = bl.Paths(d)
+    clang_rel = os.path.relpath(P.clang, P.llvm).replace(os.sep, "/")
+
+    def fake_fetch(url, dest, log, sha256=None, label=None):     # a tiny "download" with the files that matter
+        os.makedirs(os.path.dirname(dest), exist_ok=True)
+        with zipfile.ZipFile(dest, "w") as z:
+            if url == bl.LLVM_URL:
+                z.writestr("llvm-mingw-x/" + clang_rel, "clang")
+            else:
+                z.writestr("python.exe", "python")
+    old = (bl.LLVM_NAME, bl.FROZEN, os.environ.pop("BMX2_CLANG", None))
+    bl.LLVM_NAME, bl.FROZEN = "llvm-mingw-21000101-ucrt-x86_64", True     # a later release, packaged
+    try:
+        with _Stubs(fetch=fake_fetch):
+            bl.install_toolchain(P, lambda s: None)
+        check(bl.toolchain_ok(P), "after installing a newer pinned compiler and Python, the tools are current")
+        for folder, want in ((P.llvm, bl.LLVM_NAME), (P.pydir, bl.PY_NAME)):
+            with open(os.path.join(folder, bl.TOOL_MARK), encoding="utf-8") as f:
+                check(f.read().strip() == want, "%s is marked %s" % (folder, want))
+            check(not os.path.exists(os.path.join(folder, bl.TOOL_MARK + ".new")), "no half-written mark left")
+    finally:
+        bl.LLVM_NAME, bl.FROZEN = old[0], old[1]
+        if old[2] is not None:
+            os.environ["BMX2_CLANG"] = old[2]
 
 
 def test_a_chd_needs_a_build_that_reads_chd(d):
