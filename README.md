@@ -4,7 +4,7 @@
 
 > **Early work in progress.** Expect bugs, crashes and missing effects.
 
-A native Windows build of **Dave Mirra Freestyle BMX 2** (PlayStation 2, USA,
+A native Windows and Linux build of **Dave Mirra Freestyle BMX 2** (PlayStation 2, USA,
 SLUS-20159). The game's own program is translated to C and compiled for the PC.
 It is not an emulator: the game code runs natively, and a small runtime stands
 in for the PS2 hardware. Graphics run on your GPU through OpenGL.
@@ -26,16 +26,29 @@ effects (reverb) may sound drier than on a PS2.
 
 ## Requirements
 
-- Windows 10 or 11, 64-bit.
+- Windows 10 or 11, 64-bit, or Linux on x86-64 (see Linux below).
 - A GPU with OpenGL 3.3.
 - About 1 GB of free disk space.
 - Your own disc image of **Dave Mirra Freestyle BMX 2, USA (SLUS-20159),
   version 1.00**: a `.bin` + `.cue`, an `.iso`, or a `.chd` (made with
   chdman `createcd` or `createdvd`). Other regions do not work.
 
-You do not need to install a compiler or Python. The setup step downloads its
-own build tools (about 200 MB) into the game's folder and writes nothing
-outside it.
+On Windows you do not need to install a compiler or Python. The setup step
+downloads its own build tools (about 200 MB) into the game's folder and writes
+nothing outside it.
+
+**Linux:** the game is built with your system's tools. Install a C compiler,
+Python 3, and the SDL2, OpenGL and EGL development files first:
+
+```
+sudo apt install gcc python3 libsdl2-dev libgl-dev libegl-dev        # Debian, Ubuntu, Mint
+sudo dnf install gcc python3 SDL2-devel mesa-libGL-devel mesa-libEGL-devel   # Fedora
+sudo pacman -S gcc python sdl2 mesa                                  # Arch
+```
+
+The Linux release (`DaveMirraFreestyleBMX2-<version>-Linux-x86_64.tar.gz`)
+holds the program `Dave Mirra Freestyle BMX 2`; it takes the same commands as
+the Windows exe below. The setup step only downloads the project's source.
 
 ## Install and play
 
@@ -61,6 +74,9 @@ page and unpack it. Then, in that folder, build once and play:
 "Dave Mirra Freestyle BMX 2.exe" --disc=<your .cue, .iso or .chd> prepare --accept-downloads
 "Dave Mirra Freestyle BMX 2.exe" --disc=<your .cue, .iso or .chd> run
 ```
+
+On Linux, unpack the `.tar.gz` and use `"./Dave Mirra Freestyle BMX 2"` the
+same way. The built game is `game/bmx2`.
 
 After `prepare`, a double click on `Dave Mirra Freestyle BMX 2.exe` starts
 the game. It has no window of its own. Without `--disc=`, it uses the first
@@ -137,7 +153,8 @@ The setup step does all of this for you. To work on the code directly:
   the game's main CPU, sound/disc CPU and VU1 programs to C.
 - `bmx2recomp/runtime/` is the hardware runtime: GS on OpenGL, VIF/VU, IPU
   movies, SPU2 sound, pad, memory card, kernel.
-- `bmx2recomp/build.sh` builds `bmx2.exe` with clang. Its icon comes from the
+- `bmx2recomp/build.sh` builds `bmx2.exe` with clang (on Linux: `build/bmx2`
+  with gcc or clang, SDL2 and libGL/libEGL). Its icon comes from the
   game's memory card icon on your disc (`tools/make_icon.py`, built into the
   exe with `runtime/bmx2.rc`), so no game art is in this repository.
 - `bmx2recomp/NOTES.md` holds the research notes and the current state.
@@ -154,7 +171,9 @@ The `.gitignore` only lets source files in.
 
 The code in this repository is under the [MIT License](LICENSE), except
 `bmx2recomp/third_party/libchdr` (CHD reading: BSD 3-clause, with its own
-licence files or licence headers for LZMA, miniz, Zstandard and dr_flac).
+licence files or licence headers for LZMA, miniz, Zstandard and dr_flac) and
+`bmx2recomp/third_party/stb_truetype.h` (the Linux menu's text: public domain
+or MIT, at your choice).
 None of these licences grant rights to Dave Mirra Freestyle BMX 2 or its data,
 which belong to their owners.
 This project is not affiliated with or endorsed by them.
