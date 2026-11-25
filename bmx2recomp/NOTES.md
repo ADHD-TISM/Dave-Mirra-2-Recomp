@@ -94,10 +94,15 @@ are older snapshots, kept for history.
   check became {"ids": ["SLUS-20159"]} (DEVELOPERS.md: a PS2 disc's serial;
   it is also how RecompLauncher finds the player's copies, which dropping the
   check would lose). Tried in RecompLauncher 0.90 Beta 68 (2026-11-24):
-  setup and Play from cd.chd work, and a PS1 disc is refused at the pick by
-  the serial check. Cross = M (key binding) works in the game. A missing or wrong disc
-  makes prepare and run exit 7 (DiscFail): for run exit_codes explains it,
-  a failed prepare shows its last error line (code 1 said nothing useful).
+  setup and Play from cd.chd and dvd.chd work, and a PS1 disc is refused
+  at the pick by the serial check. Cross = M (key binding) works in the
+  game. A missing or wrong disc makes prepare, run and build exit 7
+  (DiscFail): for run exit_codes explains it, a failed prepare shows its
+  last error line (code 1 said nothing useful). A .chd that chdread
+  refuses (old, damaged) stays 1: 7 would wrongly say another game.
+  pg.chd (a test CHD whose cue marks the dump's first 150 sectors as a
+  pregap) passes RecompLauncher's serial check but is refused by setup
+  (7): RecompLauncher ignores the stored pregap, we do not; correct.
 - Review fixes (CHD round): build_exe.sh writes THIRD_PARTY_NOTICES.txt
   (libchdr, zstd, miniz, LZMA, dr_flac, Python licences) into the program
   and the release zip (BSD/MIT need the notice with a binary); a stored

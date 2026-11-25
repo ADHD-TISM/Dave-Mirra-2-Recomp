@@ -273,6 +273,10 @@ def test_a_wrong_or_missing_disc_exits_7(d):
     open(P.exe, "w").close()
     code = bl.cli(["--root", P.root, "run"])
     check(code == 7, "run with no disc chosen gave %r" % code)
+    with _Stubs(install_toolchain=no_download, install_project=no_download):
+        for cmd in ("prepare", "build"):     # no disc chosen: prepare (before any download) and build
+            code = bl.cli(["--root", P.root, cmd, "--accept-downloads"])
+            check(code == 7, "%s with no disc chosen gave %r" % (cmd, code))
 
 
 def test_identify_does_not_cache_a_chdread_failure(d):

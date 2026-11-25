@@ -976,7 +976,7 @@ def compile_game(P, C, log, progress=None):
 
 def build_all(P, C, disc, log, progress=None):
     if not disc:
-        raise Fail("put your game in the \"Dave Mirra 2\" folder or choose it with --disc=FILE")
+        raise DiscFail("put your game in the \"Dave Mirra 2\" folder or choose it with --disc=FILE")
     if not toolchain_ok(P) or not project_ok(P):
         raise Fail("download the build tools first (download)")
     generate(P, C, disc, log)
