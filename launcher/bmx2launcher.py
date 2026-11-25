@@ -37,6 +37,7 @@ import shutil
 import struct
 import subprocess
 import sys
+import tempfile
 import threading
 import time
 import urllib.error
@@ -438,6 +439,20 @@ def linux_missing(P):
             bad = r.returncode != 0
         except OSError:
             bad = True
+        if not bad:     # the headers can be there without the libraries to link (libGL.so, libEGL.so)
+            exe = os.path.join(tempfile.gettempdir(), "bmx2-linktest-%d" % os.getpid())
+            try:
+                r = subprocess.run([cc, "-x", "c", "-", "-o", exe] + cflags + (sdl2_flags("libs") or ["-lSDL2"])
+                                   + ["-lGL", "-lEGL"], input=src + "int main(void) { return 0; }\n",
+                                   capture_output=True, text=True)
+                bad = r.returncode != 0
+            except OSError:
+                bad = True
+            finally:
+                try:
+                    os.remove(exe)
+                except OSError:
+                    pass
         if bad:
             miss.append("the OpenGL and EGL development files")
     _linux_missing[cc] = miss
@@ -1059,11 +1074,14 @@ def compile_game(P, C, log, progress=None):
     env = dict(os.environ)
     env["PATH"] = os.path.dirname(P.clang) + os.pathsep + env.get("PATH", "")
     todo, objs, newkeys = [], [], {}
+    # an object is kept only from the same compiler: on Linux its path (/usr/bin/cc) stays across upgrades and
+    # switches, so the version line counts there (Windows keeps the path: the pinned llvm-mingw is in it)
+    cc_id = P.clang if WIN else compiler_name(P)
     for p in src:
         tag = os.path.basename(os.path.dirname(p)) + "_" + os.path.basename(p)     # runtime_main.c, gen_code_000.c
         o = os.path.join(P.obj, tag[:-2] + ".o")
         objs.append(o)
-        k = key_of(hh, " ".join(_flags(P, p)), P.clang, source_bytes(p))
+        k = key_of(hh, " ".join(_flags(P, p)), cc_id, source_bytes(p))
         newkeys[tag] = k
         if not (os.path.isfile(o) and keys.get(tag) == k):
             todo.append((tag, p, o))
@@ -1236,7 +1254,7 @@ def play(P, C, log, wait=False, extra=()):
             pass
     logf = open(os.path.join(P.game, "bmx2.log"), "w")    # what the game prints, for when something goes wrong
     try:
-        how = {"creationflags": NO_WINDOW} if WIN else {"preexec_fn": _end_with_parent} if wait else {}
+        how = {"creationflags": NO_WINDOW} if WIN else {"preexec_fn": _end_with_parent()} if wait else {}
         proc = subprocess.Popen(args, cwd=P.game, stdout=logf, stderr=subprocess.STDOUT, **how)
     finally:
         logf.close()
@@ -1253,14 +1271,22 @@ def play(P, C, log, wait=False, extra=()):
 
 
 def _end_with_parent():
-    """Linux, in the game's process before it starts: the kernel sends it SIGTERM when this program ends
-    (RecompLauncher stops the program it started, which is this one), as Windows' job does there."""
+    """Linux: a function for Popen's preexec_fn. In the game's process before it starts, it asks the kernel for
+    SIGTERM when this program ends (RecompLauncher stops the program it started, which is this one), as Windows'
+    job does there. Made here, before the fork; if this program already ended in between, the game does not start."""
+    import ctypes
+    import signal
+    parent = os.getpid()
     try:
-        import ctypes
-        import signal
-        ctypes.CDLL(None, use_errno=True).prctl(1, int(signal.SIGTERM), 0, 0, 0)   # PR_SET_PDEATHSIG
+        prctl = ctypes.CDLL(None, use_errno=True).prctl
     except (OSError, AttributeError):
-        pass
+        return None
+
+    def child():
+        prctl(1, int(signal.SIGTERM), 0, 0, 0)   # PR_SET_PDEATHSIG
+        if os.getppid() != parent:
+            os._exit(1)
+    return child
 
 
 def end_with_us(proc):
@@ -1344,7 +1370,10 @@ def open_session(root, disc=None):
     _chd_session[:] = [P]       # Linux: chd_tool builds chdread under this root
     C = Config(P.cfg)
     if disc:
-        check_disc(C, disc)
+        # Linux reads a .chd with chdread built from the project: before the first install there is none, so
+        # prepare checks the image after it has installed the project
+        if WIN or project_ok(P) or not (image_present(disc) and is_chd(resolve_image(disc))):
+            check_disc(C, disc)
         C.set("disc", os.path.abspath(disc))
     else:
         adopt_disc(P, C)

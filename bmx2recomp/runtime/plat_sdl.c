@@ -117,7 +117,7 @@ DWORD plat_xinput_get(DWORD idx, plat_xi_state *s) {
 
 DWORD plat_xinput_set(DWORD idx, plat_xi_vibration *v) {
     if (idx > 3 || !slot[idx]) return 1167;
-    /* held until changed: XInput motors run until the next value (about 49 days here) */
+    /* XInput motors run until the next value; SDL caps a rumble at SDL_MAX_RUMBLE_DURATION_MS (65 s) */
     SDL_GameControllerRumble(slot[idx], v->left, v->right, v->left || v->right ? 0xffffffffu : 0);
     return 0;
 }

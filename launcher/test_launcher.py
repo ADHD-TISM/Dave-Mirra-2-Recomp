@@ -598,6 +598,16 @@ def test_linux_setup_names_the_missing_packages(d):
             check(False, "prepare went on without SDL2")
 
 
+def test_linux_first_setup_from_a_chd_waits_for_the_project(d):
+    # chdread is built from the project: before the first install the image is checked by prepare, not refused
+    chd = os.path.join(d, "game.chd")
+    with open(chd, "wb") as f:
+        f.write(bl.CHD_MAGIC + b"\0" * 2040)
+    with linux_flow():
+        P, C = bl.open_session(os.path.join(d, "root"), chd)
+    check(C.get("disc") == os.path.abspath(chd), C.get("disc"))
+
+
 def test_linux_links_sdl2_opengl_and_egl(d):
     with linux_flow(), _Stubs(sdl2_flags=lambda kind: ["-lSDL2"] if kind == "libs" else ["-I/usr/include/SDL2"]):
         a = bl.link_args()

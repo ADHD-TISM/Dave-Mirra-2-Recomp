@@ -62,6 +62,10 @@ are older snapshots, kept for history.
   code is unchanged; rumble via SDL_GameControllerRumble), audio (SDL
   callback pulls from the same ring with the same drift drop; waits for 2
   buffers at start and after running dry), message box.
+- Threads and SDL: the EE thread pumps events and toggles fullscreen, the
+  graphics thread swaps and reads the drawable size (as WGL does on
+  Windows). SDL does not promise that; it works on X11 with libX11 1.8+
+  (thread-safe Xlib). Native Wayland SDL is untested.
 - No display and `--no-window` (ssh, CI): gs_gl.c makes an EGL context with
   no surface (Mesa surfaceless platform, else the default display). Ubuntu's
   SDL 2.0.20 has no offscreen driver, so SDL is not used for that.
