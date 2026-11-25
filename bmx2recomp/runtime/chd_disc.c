@@ -16,22 +16,36 @@ int chd_disc_is_chd(FILE *f) {
     return ok;
 }
 
-/* track 1's layout, from the CD metadata: the data offset in a 2352-byte sector, and its frame count */
+static uint32_t lead;               /* frames before LSN 0: a track 1 pregap stored in the image */
+
+/* track 1's layout, from the CD metadata: the data offset in a 2352-byte sector, its frame count and where
+ * LSN 0 is. 1 = a CD, 0 = not a CD (a DVD image of 2048-byte sectors), -1 = refused (reason in err). */
 static int cd_track1(char *err, size_t errlen, uint32_t *frames) {
-    char meta[256] = { 0 }, type[32] = { 0 }, sub[32];
+    char meta[256] = { 0 }, type[32] = { 0 }, sub[32], pgtype[32] = { 0 }, pgsub[32];
     uint32_t len = 0, tag = 0;
     uint8_t flags = 0;
-    int track = 0, n = 0;
-    if (chd_get_metadata(chd, CDROM_TRACK_METADATA2_TAG, 0, meta, sizeof meta - 1, &len, &tag, &flags) != CHDERR_NONE &&
-        chd_get_metadata(chd, CDROM_TRACK_METADATA_TAG, 0, meta, sizeof meta - 1, &len, &tag, &flags) != CHDERR_NONE)
-        return 0;                    /* not a CD: a DVD image of 2048-byte sectors */
-    if (sscanf(meta, "TRACK:%d TYPE:%31s SUBTYPE:%31s FRAMES:%d", &track, type, sub, &n) < 4 || track != 1 || n <= 0) {
+    int track = 0, n = 0, pregap = 0, postgap = 0, got;
+    lead = 0;
+    if (chd_get_metadata(chd, CDROM_TRACK_METADATA2_TAG, 0, meta, sizeof meta - 1, &len, &tag, &flags) == CHDERR_NONE)
+        got = sscanf(meta, CDROM_TRACK_METADATA2_FORMAT, &track, type, sub, &n, &pregap, pgtype, pgsub, &postgap) >= 4;
+    else if (chd_get_metadata(chd, CDROM_TRACK_METADATA_TAG, 0, meta, sizeof meta - 1, &len, &tag, &flags) == CHDERR_NONE)
+        got = sscanf(meta, CDROM_TRACK_METADATA_FORMAT, &track, type, sub, &n) == 4;
+    else if (chd_get_metadata(chd, CDROM_OLD_METADATA_TAG, 0, meta, sizeof meta - 1, &len, &tag, &flags) == CHDERR_NONE) {
+        snprintf(err, errlen, "an old CHD version: update it with chdman (chdman copy -i old.chd -o new.chd)");
+        return -1;
+    } else
+        return 0;
+    if (!got || track != 1 || n <= 0) {
         snprintf(err, errlen, "unreadable CD track information: %.80s", meta);
         return -1;
     }
-    *frames = (uint32_t)n;
+    if (pgtype[0] == 'V' && pregap > 0) {           /* the pregap's frames are in the image, before LSN 0 */
+        if (pregap >= n) { snprintf(err, errlen, "unreadable CD track information: %.80s", meta); return -1; }
+        lead = (uint32_t)pregap;
+    }
+    *frames = (uint32_t)n - lead;
     if (!strcmp(type, "MODE1") || !strcmp(type, "MODE2_FORM1")) data_off = 0;      /* stored as 2048 bytes */
-    else if (!strcmp(type, "MODE2")) data_off = 8;                                  /* 2336: subheader first */
+    else if (!strcmp(type, "MODE2") || !strcmp(type, "MODE2_FORM_MIX")) data_off = 8;   /* 2336: subheader first */
     else if (!strcmp(type, "MODE1_RAW") || !strcmp(type, "MODE2_RAW")) data_off = -1;   /* full 2352 sectors */
     else { snprintf(err, errlen, "the first track is %s, not a data track", type); return -1; }
     return 1;
@@ -74,12 +88,12 @@ uint32_t chd_disc_sectors(void) { return nsect; }
 
 int chd_disc_read(uint32_t lsn, uint8_t *out) {
     if (!chd || lsn >= nsect) { memset(out, 0, 2048); return chd ? 0 : -1; }
-    uint32_t hn = lsn / per_hunk;
+    uint32_t frame = lsn + lead, hn = frame / per_hunk;
     if (hn != cur_hunk) {
         if (chd_read(chd, hn, hunk) != CHDERR_NONE) { cur_hunk = UINT32_MAX; memset(out, 0, 2048); return -1; }
         cur_hunk = hn;
     }
-    const uint8_t *s = hunk + (size_t)(lsn % per_hunk) * unit;
+    const uint8_t *s = hunk + (size_t)(frame % per_hunk) * unit;
     int off = data_off >= 0 ? data_off : s[15] == 2 ? 24 : 16;    /* raw: MODE2 form 1 data at 24, MODE1 at 16 */
     memcpy(out, s + off, 2048);
     return 0;

@@ -85,6 +85,18 @@ are older snapshots, kept for history.
   createdvd (lzma/zlib/huff/flac) of the USA disc both decode to the exact
   .iso bytes, prepare from the CD CHD and 1140 frames from either play with
   no frame over 17 ms. Not checked: RecompLauncher's iso9660 check on a .chd.
+- Review fixes (CHD round): build_exe.sh writes THIRD_PARTY_NOTICES.txt
+  (libchdr, zstd, miniz, LZMA, dr_flac, Python licences) into the program
+  and the release zip (BSD/MIT need the notice with a binary); a stored
+  track 1 pregap (PGTYPE V...) moves LSN 0 (checked with a chdman CHD of a
+  cue with INDEX 00/01 00:02:00: the data is the .iso minus 150 sectors);
+  MODE2_FORM_MIX reads like MODE2; a v3/v4 CHD (CHCD metadata) says to
+  update it with chdman; chdread failures raise ChdFail, which identify()
+  never caches; play() refuses a .chd when the build has no libchdr
+  (launcher.json build_chd); chd_disc.c's object key includes the libchdr
+  headers; Alt and F10 as pad keys no longer open the window's system menu
+  (WM_SYSCOMMAND SC_KEYMENU, WM_SYSCHAR); --image keeps argv when the full
+  path does not fit 4096 bytes.
 - Not done (Recomp Standards): a Linux build, Recomp Achievements, dumps values,
   a new pinned compiler is never installed over an old one (toolchain_ok
   only checks the file exists; older than this change).

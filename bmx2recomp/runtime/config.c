@@ -97,6 +97,7 @@ static void set(const char *k, char *v, int line) {
             for (char *p = strtok(v, ","); p && n < 2; p = strtok(NULL, ",")) {
                 int c = parse_key(trim(p));
                 if (c < 0) { LOG("bmx2.ini line %d: unknown key \"%s\" for %s\n", line, trim(p), k); return; }
+                if (!c && !_strnicmp(trim(p), "wheel", 5)) LOG("bmx2.ini line %d: the mouse wheel cannot be a pad button yet (%s)\n", line, k);
                 vk[n++] = c;
             }
             g_cfg.keys[b][0] = vk[0]; g_cfg.keys[b][1] = vk[1];

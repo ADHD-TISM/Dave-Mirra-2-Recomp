@@ -233,8 +233,10 @@ int main(int argc, char **argv) {
         else if (!strcmp(argv[i], "--scale") && i + 1 < argc) { gs_scale = atoi(argv[++i]); scale_given = 1; }
         else if (!strcmp(argv[i], "--image") && i + 1 < argc) {
             /* made absolute now: the disc folder below becomes the current directory */
-            static char full[MAX_PATH]; extern const char *g_disc_image;
-            g_disc_image = GetFullPathNameA(argv[++i], MAX_PATH, full, NULL) ? full : argv[i];
+            /* UTF-8 paths (bmx2.manifest) can pass MAX_PATH bytes sooner; a result that did not fit keeps argv */
+            static char full[4096]; extern const char *g_disc_image;
+            DWORD n = GetFullPathNameA(argv[++i], sizeof full, full, NULL);
+            g_disc_image = n && n < sizeof full ? full : argv[i];
         }
         else if (!strcmp(argv[i], "--log-vif") && i + 1 < argc) { extern int g_log_vif; g_log_vif = atoi(argv[++i]); }
         else if (!strcmp(argv[i], "--log-gs") && i + 1 < argc) { extern int g_log_gs; g_log_gs = atoi(argv[++i]); }

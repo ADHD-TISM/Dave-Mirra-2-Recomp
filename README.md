@@ -154,6 +154,7 @@ The `.gitignore` only lets source files in.
 
 The code in this repository is under the [MIT License](LICENSE), except
 `bmx2recomp/third_party/libchdr` (CHD reading: BSD 3-clause, with its own
-licence files for LZMA, miniz, Zstandard and dr_flac). It grants no
+licence files or licence headers for LZMA, miniz, Zstandard and dr_flac).
+It grants no
 rights to Dave Mirra Freestyle BMX 2 or its data, which belong to their owners.
 This project is not affiliated with or endorsed by them.

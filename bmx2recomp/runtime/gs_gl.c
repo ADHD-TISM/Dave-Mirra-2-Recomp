@@ -153,6 +153,9 @@ static LRESULT CALLBACK wndproc(HWND h, UINT m, WPARAM w, LPARAM l) {
         if (menu_on_key(w, l)) return 0;   /* Esc opens the in-game menu; while open it takes the keys */
         break;
     case WM_SYSKEYDOWN: if (w == VK_RETURN && (l & (1 << 29))) { set_fullscreen(h, !is_full); return 0; } break;
+    /* Alt and F10 can be pad buttons (bmx2.ini keys): no system-menu mode, no mnemonic beeps; Alt+F4 still closes */
+    case WM_SYSCOMMAND: if ((w & 0xfff0) == SC_KEYMENU) return 0; break;
+    case WM_SYSCHAR: return 0;
     case WM_CLOSE: LOG("gs: window closed\n"); menu_save_pending(); exit(0);   /* settings changed in an open menu are kept */
     case WM_PAINT: { PAINTSTRUCT ps; BeginPaint(h, &ps); EndPaint(h, &ps); return 0; }
     case WM_ERASEBKGND: return 1;

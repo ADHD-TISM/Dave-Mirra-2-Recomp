@@ -160,7 +160,7 @@
     },
     {
       "id": "keys", "label": "Keyboard", "group": "Controls",
-      "help": "Up to 2 keys per button. Escape also opens the game's menu and F11 switches fullscreen.",
+      "help": "Up to 2 keys per button. Escape also opens the game's menu, F11 and Alt+Return switch fullscreen. The mouse wheel does nothing yet.",
       "bindings": {
         "separator": ", ", "max": 2,
         "names": { "Return": "enter" },

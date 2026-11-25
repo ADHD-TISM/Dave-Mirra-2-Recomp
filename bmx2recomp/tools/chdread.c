@@ -1,6 +1,6 @@
 /* chdread: reads data sectors from a CHD disc image for the launcher (bmx2launcher.py Image), which
- * cannot decode CHD itself. Built from runtime/chd_disc.c and third_party/libchdr/unity.c:
- *   clang -O2 -w tools/chdread.c runtime/chd_disc.c third_party/libchdr/unity.c -o chdread.exe
+ * cannot decode CHD itself. Built from runtime/chd_disc.c and third_party/libchdr_all.c (launcher/build_exe.sh does it):
+ *   clang -O2 -w -municode -static tools/chdread.c runtime/chd_disc.c third_party/libchdr_all.c -o chdread.exe
  * Paths are taken as UTF-16 (wmain), so any characters work.
  *   chdread info FILE              prints "sectors N"
  *   chdread read FILE LSN COUNT    writes COUNT 2048-byte sectors from LSN to stdout

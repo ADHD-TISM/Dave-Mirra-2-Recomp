@@ -249,6 +249,35 @@ def test_image_reads_a_chd_through_chdread(d):
     check(bl.is_chd(p) and not bl.is_chd(iso), "is_chd")
 
 
+def test_a_chd_needs_a_build_that_reads_chd(d):
+    P = bl.Paths(d)
+    os.makedirs(P.game)
+    open(P.exe, "w").close()
+    chd = os.path.join(d, "game.chd")
+    with open(chd, "wb") as f:
+        f.write(bl.CHD_MAGIC + b"\0" * 2040)
+    expect_fail(lambda: bl.play(P, _FakeConfig(disc=chd), lambda s: None), "cannot read .chd images")
+
+
+def test_identify_does_not_cache_a_chdread_failure(d):
+    p = os.path.join(d, "game.chd")
+    with open(p, "wb") as f:
+        f.write(bl.CHD_MAGIC + b"\0" * 2040)
+
+    def fake_chdread(self, *args):
+        if args[0] == "info":
+            return b"sectors 32\n"
+        raise bl.ChdFail("game.chd: read error at sector 16")
+    old = bl.Image._chdread
+    bl.Image._chdread = fake_chdread
+    C = _FakeConfig()
+    try:
+        expect_fail(lambda: bl.identify(C, p), "read error")
+        check(not C.d.get("ident"), "the failure was cached: %r" % C.d.get("ident"))
+    finally:
+        bl.Image._chdread = old
+
+
 class _Stubs:
     """Replace launcher functions for one test; put them back after."""
     def __init__(self, **fns):

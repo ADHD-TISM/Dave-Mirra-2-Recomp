@@ -1,6 +1,7 @@
 #!/bin/sh
-# Pack a release: DaveMirraFreestyleBMX2-<version>-Windows-x64.zip with "Dave Mirra Freestyle BMX 2.exe" and
-# recomplauncher.json at the top (RecompLauncher installs from it). Attach the zip to the GitHub release.
+# Pack a release: DaveMirraFreestyleBMX2-<version>-Windows-x64.zip with "Dave Mirra Freestyle BMX 2.exe",
+# recomplauncher.json (RecompLauncher installs from it) and THIRD_PARTY_NOTICES.txt (the licences of the code
+# built into the exe) at the top. Attach the zip to the GitHub release.
 # usage: sh launcher/release.sh v1.2.3 [out folder]      (out folder: launcher/dist)
 # Needs what build_exe.sh needs.
 set -e
@@ -36,5 +37,5 @@ with zipfile.ZipFile(out + ".tmp", "w", zipfile.ZIP_DEFLATED) as z:
     for f in files:
         z.write(f, os.path.basename(f))
 os.replace(out + ".tmp", out)
-' "$ZIP" "$OUT/Dave Mirra Freestyle BMX 2.exe" "$HERE/../recomplauncher.json"
+' "$ZIP" "$OUT/Dave Mirra Freestyle BMX 2.exe" "$HERE/../recomplauncher.json" "$OUT/THIRD_PARTY_NOTICES.txt"
 echo "packed $ZIP"

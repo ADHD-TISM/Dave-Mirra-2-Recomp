@@ -75,6 +75,10 @@ class Fail(Exception):
     """A step failed; the message says what to do about it."""
 
 
+class ChdFail(Fail):
+    """chdread.exe is missing or failed: says nothing about which game the image is, so it is not cached."""
+
+
 # ---------------------------------------------------------------- paths/config
 
 def default_root():
@@ -298,10 +302,13 @@ def file_bytes(path):
 
 
 def source_bytes(path):
-    """A source file's bytes; for third_party/libchdr_all.c, which only includes the libchdr tree, all of that tree."""
+    """A source file's bytes, plus the libchdr files it includes: all of the tree for third_party/libchdr_all.c,
+    the headers for runtime/chd_disc.c (so a new libchdr also rebuilds the code that reads its header struct)."""
     data = file_bytes(path)
-    if os.path.basename(path) == "libchdr_all.c":
-        top = os.path.join(os.path.dirname(path), "libchdr")
+    name, here = os.path.basename(path), os.path.dirname(path)
+    top = (os.path.join(here, "libchdr") if name == "libchdr_all.c" else
+           os.path.join(here, "..", "third_party", "libchdr", "include") if name == "chd_disc.c" else None)
+    if top and os.path.isdir(top):
         for dirpath, dirs, files in os.walk(top):
             dirs.sort()
             for n in sorted(files):
@@ -511,7 +518,7 @@ def chd_tool():
     here = getattr(sys, "_MEIPASS", None) if FROZEN else os.path.dirname(os.path.abspath(__file__))
     p = os.path.join(here or "", "chdread.exe")
     if not os.path.isfile(p):
-        raise Fail("CHD images need chdread.exe next to the launcher (launcher/build_exe.sh builds it)")
+        raise ChdFail("CHD images need chdread.exe next to the launcher (launcher/build_exe.sh builds it)")
     return p
 
 
@@ -534,7 +541,7 @@ class Image:
             out = self._chdread("info", self.path).decode("ascii", "replace")
             m = re.match(r"sectors (\d+)", out)
             if not m:
-                raise Fail("%s: unexpected answer from chdread: %s" % (os.path.basename(self.path), out.strip()))
+                raise ChdFail("%s: unexpected answer from chdread: %s" % (os.path.basename(self.path), out.strip()))
             self.nsect, self.cache = int(m.group(1)), {}
             return
         n = os.path.getsize(self.path)
@@ -549,8 +556,8 @@ class Image:
     def _chdread(self, *args):
         r = subprocess.run([chd_tool()] + list(args), capture_output=True, creationflags=NO_WINDOW)
         if r.returncode:
-            raise Fail("%s: %s" % (os.path.basename(self.path),
-                                   r.stderr.decode("utf-8", "replace").strip() or "chdread failed (%d)" % r.returncode))
+            raise ChdFail("%s: %s" % (os.path.basename(self.path),
+                                      r.stderr.decode("utf-8", "replace").strip() or "chdread failed (%d)" % r.returncode))
         return r.stdout
 
     def close(self):
@@ -566,7 +573,7 @@ class Image:
                 n = min(CHD_CHUNK, self.nsect - base)
                 data = self._chdread("read", self.path, str(base), str(n))
                 if len(data) != n * 2048:
-                    raise Fail("%s: short read from chdread" % os.path.basename(self.path))
+                    raise ChdFail("%s: short read from chdread" % os.path.basename(self.path))
                 self.cache = {base: data}      # one chunk: reads go forward through each file
             d = self.cache[base]
             o = (lba - base) * 2048
@@ -637,6 +644,8 @@ def identify(C, path):
             cnf = im.read("SYSTEM.CNF").decode("ascii", "replace")
             m = re.search(r"BOOT2\s*=\s*cdrom0:\\?([^;\s]+)", cnf, re.I)
             cached = m.group(1).upper() if m else ""
+        except ChdFail:
+            raise           # a helper problem, not "this is another disc": try again next time
         except Fail:
             cached = ""
         finally:
@@ -893,8 +902,8 @@ def compile_game(P, C, log, progress=None):
         newkeys[tag] = k
         if not (os.path.isfile(o) and keys.get(tag) == k):
             todo.append((tag, p, o))
-    # vu.c (with the recompiled VU1 programs) is still the largest file: start it first
-    todo.sort(key=lambda t: t[1].endswith(os.sep + "vu.c"), reverse=True)
+    # vu.c (with the recompiled VU1 programs) and libchdr_all.c are the largest files: start them first
+    todo.sort(key=lambda t: t[1].endswith((os.sep + "vu.c", os.sep + "libchdr_all.c")), reverse=True)
     log("compiling %d of %d files%s" % (len(todo), len(src), " (the first build takes about a minute)" if len(todo) > 20 else ""))
     done = [0]
     errors = []
@@ -956,6 +965,7 @@ def compile_game(P, C, log, progress=None):
         os.remove(tmp)
         raise Fail("%s is in use: close the game and build again" % EXE_FILE)
     C.set("build_key", build_key(P))
+    C.set("build_chd", any(os.path.basename(p) == "libchdr_all.c" for p in src))
     log("game built: %s" % P.exe)
 
 
@@ -971,8 +981,8 @@ def build_all(P, C, disc, log, progress=None):
 # ---------------------------------------------------------------- settings (bmx2.ini)
 
 KEYNAMES = ("up down left right enter backspace tab space lshift rshift lctrl rctrl lalt ralt "
-            "comma period slash semicolon num0 num1 num2 num3 num4 num5 num6 num7 num8 num9 f1-f12 escape shift ctrl alt "
-            "none").split()
+            "comma period slash semicolon num0 num1 num2 num3 num4 num5 num6 num7 num8 num9 f1-f12 return escape shift ctrl alt "
+            "\"mouse left\" \"mouse right\" \"mouse middle\" \"mouse 4\" \"mouse 5\" none").split()
 B01 = ["0", "1"]
 
 # (key, tab, label, kind, choices, default, comment)
@@ -1044,6 +1054,8 @@ def play(P, C, log, wait=False, extra=()):
     if not disc:
         raise Fail("no game image chosen (--disc=FILE)")
     image = resolve_image(disc)
+    if is_chd(image) and not C.get("build_chd"):     # a build from v0.2.0 or older reads a .chd as raw sectors
+        raise Fail("this build of the game cannot read .chd images: run the setup step again (prepare)")
     args = [P.exe, "--image", os.path.abspath(image)] + list(extra) + [P.game]
     for n in (2, 1):        # keep the logs of the last 3 runs: bmx2.log, bmx2.1.log, bmx2.2.log
         older = os.path.join(P.game, "bmx2.%d.log" % n)
