@@ -16,6 +16,17 @@ xref search). Names come from `tools/names.txt`; add confirmed ones there.
 `tools/dis.py` needs capstone (not installed) and REA cannot analyse MIPS ELFs
 on Windows, so use eedis.py. Workflow summary: skill `ps2-static-recomp`.
 
+## State (2026-11-24): v0.2.0 published, installs through RecompLauncher
+v0.2.0 (full release, Latest, tag at 2a0c8ad) replaces the launcher window
+with RecompLauncher support: the release zip holds "Dave Mirra Freestyle
+BMX 2.exe" (setup + start, no window) and recomplauncher.json (see
+"RecompLauncher instead of the launcher window"). Tested in RecompLauncher
+0.90 Beta 68: add (Settings > Bring Your Games > Pick a Folder), setup with
+downloads, settings writes, Play, and Big Picture fullscreen on the Dell all
+pass. v0.1.9 gave bmx2.exe the game's icon and name. Open: the laptop still
+tears (see "Two-chip laptops", left for later by the user). Next: playtest
+(see "Next step"). The State sections below are older snapshots.
+
 ## State (2026-11-23): v0.1.8 published, playable
 Every level loads and rides, sound plays, memory card saves work, player 2,
 vibration, widescreen, scale 1-4x, launcher with Download / Update / Build.
@@ -65,12 +76,29 @@ are older snapshots, kept for history.
   windres arguments.
 - Not done (Recomp Standards): CHD input (PS2 DVD CHDs use lzma/zlib/huff/
   flac hunks, medium), a Linux build, Recomp Achievements, dumps values,
-  key bindings and window size as RecompLauncher settings (ini only), a new
-  pinned compiler is never installed over an old one (toolchain_ok only
-  checks the file exists; older than this change). bmx2.exe uses ANSI paths
-  (main(argc, argv), SetCurrentDirectoryA): a {data} or disc path outside
-  the system code page fails; a UTF-8 activeCodePage manifest would fix it.
-  Not tried inside RecompLauncher itself.
+  a new pinned compiler is never installed over an old one (toolchain_ok
+  only checks the file exists; older than this change).
+- Since v0.2.0: bmx2.exe carries a manifest (runtime/bmx2.manifest, in
+  bmx2.rc as resource 1 type 24) with activeCodePage UTF-8, so its ANSI
+  calls take UTF-8 and a disc or {data} path with any characters works
+  (checked: v0.2.0 fails to open a disc in work\ünï_日本_тест, the new
+  build plays from it, and prepare + run work from a root named
+  mantest_ü日本). The rc now always builds; -D BMX2_ICON adds the icon
+  when the disc gave one. The launcher's _resources knows three project
+  ages (no rc; rc + icon; rc + manifest [+ icon]).
+- Since v0.2.0: RecompLauncher settings for the window size (only when not
+  fullscreen) and all 24 keyboard keys ("bindings", separator ", ",
+  Return written as enter). The ini reader also takes the names the
+  launcher's key chips write: return, escape, shift, ctrl, alt, f1-f12,
+  mouse left/right/middle/4/5 (GetAsyncKeyState reads mouse buttons too);
+  wheel up/down are accepted and do nothing.
+- Tried in RecompLauncher 0.90 Beta 68 (2026-11-24, v0.2.0 zip): all steps
+  pass. That version has no Developer tools page or "Add a build" button
+  (DEVELOPERS.md is ahead of it). Launcher traps seen: the project-link list
+  can pick the row under the mouse (it linked "007 Agent Under Fire" once);
+  a removed and re-added entry keeps its old "set up" state until Game
+  Settings > Setup Options runs setup again; its Discord hook logs the setup
+  step as "started outside the launcher" (same exe for prepare and start).
 
 ## Exe icon and name (2026-11-23)
 - The disc's ASSETS/ICON.DAT (the memory card icon, the same bytes as the

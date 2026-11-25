@@ -423,6 +423,26 @@ def test_build_key_does_not_depend_on_the_folder(d):
     check(keys[0] == keys[1], "build_key changed with the folder")
 
 
+def test_resources_add_the_manifest_with_or_without_the_icon(d):
+    P = bl.Paths(d)
+    rt = os.path.join(P.project, "runtime")
+    os.makedirs(rt)
+    os.makedirs(P.gen)
+    rc, man, ico = os.path.join(rt, "bmx2.rc"), os.path.join(rt, "bmx2.manifest"), os.path.join(P.gen, "bmx2.ico")
+    check(bl._resources(P) == [], "resources without bmx2.rc")
+    for p in (rc, ico):
+        open(p, "w").close()
+    res = bl._resources(P)      # v0.1.9 to v0.2.0: no manifest, the rc names the icon unconditionally
+    check(res == [rc, ico] and "-DBMX2_ICON" not in bl._res_args(P, res), "old project: %r" % res)
+    open(man, "w").close()
+    res = bl._resources(P)
+    check(res == [rc, man, ico] and "-DBMX2_ICON" in bl._res_args(P, res), "manifest and icon: %r" % res)
+    os.remove(ico)
+    res = bl._resources(P)      # no icon made: the manifest is still added
+    check(res == [rc, man] and "-DBMX2_ICON" not in bl._res_args(P, res), "manifest only: %r" % res)
+    check(bl._res_args(P, res)[-4:-2] == ["-i", rc], "windres input: %r" % bl._res_args(P, res))
+
+
 def test_an_unexpected_error_does_not_escape(d):
     def boom(argv):
         raise TypeError("odd data")

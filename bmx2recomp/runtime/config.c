@@ -34,12 +34,21 @@ static const struct { const char *name; int vk; } key_names[] = {
     { "lshift", VK_LSHIFT }, { "rshift", VK_RSHIFT }, { "lctrl", VK_LCONTROL }, { "rctrl", VK_RCONTROL },
     { "lalt", VK_LMENU }, { "ralt", VK_RMENU }, { "comma", VK_OEM_COMMA }, { "period", VK_OEM_PERIOD },
     { "slash", VK_OEM_2 }, { "semicolon", VK_OEM_1 }, { "none", 0 },
+    /* the names RecompLauncher's key chips write (recomplauncher.json "bindings") */
+    { "return", VK_RETURN }, { "escape", VK_ESCAPE }, { "shift", VK_SHIFT }, { "ctrl", VK_CONTROL }, { "alt", VK_MENU },
+    { "mouse left", VK_LBUTTON }, { "mouse right", VK_RBUTTON }, { "mouse middle", VK_MBUTTON },
+    { "mouse 4", VK_XBUTTON1 }, { "mouse 5", VK_XBUTTON2 },
+    { "wheel up", 0 }, { "wheel down", 0 },   /* no held state to read: accepted, does nothing */
 };
 
 /* one key name -> virtual-key code; -1 if unknown */
 static int parse_key(const char *s) {
     if (s[0] && !s[1] && isalnum((unsigned char)s[0])) return toupper((unsigned char)s[0]);
     if (!_strnicmp(s, "num", 3) && s[3] >= '0' && s[3] <= '9' && !s[4]) return VK_NUMPAD0 + s[3] - '0';
+    if ((s[0] == 'f' || s[0] == 'F') && s[1] >= '1' && s[1] <= '9') {    /* f1 .. f12 */
+        int n = atoi(s + 1);
+        if (n >= 1 && n <= 12 && (n < 10 ? !s[2] : !s[3])) return VK_F1 + n - 1;
+    }
     for (unsigned k = 0; k < sizeof key_names / sizeof key_names[0]; k++)
         if (!_stricmp(s, key_names[k].name)) return key_names[k].vk;
     return -1;

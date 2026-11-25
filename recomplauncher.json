@@ -59,6 +59,19 @@
       "defaults": { "fullscreen": "0" }
     },
     {
+      "id": "window_size", "label": "Window size", "group": "Picture", "when": { "fullscreen": "0" },
+      "help": "Auto is 1280x960 (1280x720 with widescreen), made smaller to fit the screen.",
+      "choices": [
+        { "label": "Auto", "set": { "window_size": "auto" } },
+        { "label": "960x720", "set": { "window_size": "960x720" } },
+        { "label": "1280x960", "set": { "window_size": "1280x960" } },
+        { "label": "1600x1200", "set": { "window_size": "1600x1200" } },
+        { "label": "1280x720", "set": { "window_size": "1280x720" } },
+        { "label": "1920x1080", "set": { "window_size": "1920x1080" } }
+      ],
+      "defaults": { "window_size": "auto" }
+    },
+    {
       "id": "widescreen", "label": "Widescreen", "group": "Picture",
       "help": "A wider 3D view shown at 16:9. Menus and on-screen text are stretched.",
       "choices": [
@@ -144,6 +157,48 @@
         { "label": "Off", "set": { "pad2": "off" } }
       ],
       "defaults": { "pad2": "gamepad2" }
+    },
+    {
+      "id": "keys", "label": "Keyboard", "group": "Controls",
+      "help": "Up to 2 keys per button. Escape also opens the game's menu and F11 switches fullscreen.",
+      "bindings": {
+        "separator": ", ", "max": 2,
+        "names": { "Return": "enter" },
+        "actions": [
+          { "label": "D-pad up", "key": "key_up" },
+          { "label": "D-pad down", "key": "key_down" },
+          { "label": "D-pad left", "key": "key_left" },
+          { "label": "D-pad right", "key": "key_right" },
+          { "label": "Cross", "key": "key_cross" },
+          { "label": "Circle", "key": "key_circle" },
+          { "label": "Square", "key": "key_square" },
+          { "label": "Triangle", "key": "key_triangle" },
+          { "label": "Start", "key": "key_start" },
+          { "label": "Select", "key": "key_select" },
+          { "label": "L1", "key": "key_l1" },
+          { "label": "R1", "key": "key_r1" },
+          { "label": "L2", "key": "key_l2" },
+          { "label": "R2", "key": "key_r2" },
+          { "label": "L3", "key": "key_l3" },
+          { "label": "R3", "key": "key_r3" },
+          { "label": "Left stick up", "key": "key_lstick_up" },
+          { "label": "Left stick down", "key": "key_lstick_down" },
+          { "label": "Left stick left", "key": "key_lstick_left" },
+          { "label": "Left stick right", "key": "key_lstick_right" },
+          { "label": "Right stick up", "key": "key_rstick_up" },
+          { "label": "Right stick down", "key": "key_rstick_down" },
+          { "label": "Right stick left", "key": "key_rstick_left" },
+          { "label": "Right stick right", "key": "key_rstick_right" }
+        ]
+      },
+      "defaults": {
+        "key_up": "up", "key_down": "down", "key_left": "left", "key_right": "right",
+        "key_cross": "K, space", "key_circle": "L", "key_square": "J", "key_triangle": "I",
+        "key_start": "enter", "key_select": "backspace, rshift",
+        "key_l1": "Q", "key_r1": "E", "key_l2": "1", "key_r2": "3", "key_l3": "Z", "key_r3": "C",
+        "key_lstick_up": "W", "key_lstick_down": "S", "key_lstick_left": "A", "key_lstick_right": "D",
+        "key_rstick_up": "num8", "key_rstick_down": "num2", "key_rstick_left": "num4", "key_rstick_right": "num6"
+      }
     }
   ],
   "saves": ["{data}/game/memcard/mc0", "{data}/game/bmx2.ini"],

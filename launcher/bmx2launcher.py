@@ -760,9 +760,23 @@ RES_ARGS = ["-O", "coff"]     # windres: the icon as a COFF object the linker ta
 
 
 def _resources(P):
-    """runtime/bmx2.rc and the icon it names, when both exist (a project from v0.1.8 or older has neither)."""
-    rc, ico = os.path.join(P.project, "runtime", "bmx2.rc"), os.path.join(P.gen, "bmx2.ico")
-    return [rc, ico] if os.path.isfile(rc) and os.path.isfile(ico) else []
+    """runtime/bmx2.rc and the files it names: the manifest (v0.2.1 on) and the icon when it was made.
+    v0.1.9 to v0.2.0 have no manifest and need the icon; v0.1.8 and older have no bmx2.rc."""
+    rt = os.path.join(P.project, "runtime")
+    rc, man, ico = os.path.join(rt, "bmx2.rc"), os.path.join(rt, "bmx2.manifest"), os.path.join(P.gen, "bmx2.ico")
+    if not os.path.isfile(rc):
+        return []
+    if os.path.isfile(man):
+        return [rc, man] + ([ico] if os.path.isfile(ico) else [])
+    return [rc, ico] if os.path.isfile(ico) else []
+
+
+def _res_args(P, res):
+    """windres arguments for _resources' list (-D BMX2_ICON only where the rc tests it and the icon exists)."""
+    args = ["-I", P.gen, "-I", os.path.dirname(res[0])]
+    if os.path.join(P.gen, "bmx2.ico") in res and len(res) == 3:
+        args.append("-DBMX2_ICON")
+    return args + ["-i", res[0]] + RES_ARGS
 
 
 def build_key(P):
@@ -852,11 +866,12 @@ def compile_game(P, C, log, progress=None):
     res = _resources(P)
     windres = os.path.join(os.path.dirname(P.clang), "x86_64-w64-mingw32-windres.exe")
     if res and not os.path.isfile(windres):
-        log("no windres next to the compiler: building without the icon")
+        log("no windres next to the compiler: building without the icon and the manifest")
     elif res:
-        log("adding the icon")
+        log("adding the icon and the manifest" if len(res) == 3 else "adding the manifest" if res[1].endswith(".manifest")
+            else "adding the icon")
         ro = os.path.join(P.obj, "bmx2_res.o")     # a COFF object: lld would read a .res name as a raw .res file
-        run([windres, "-I", P.gen, "-i", res[0]] + RES_ARGS + ["-o", ro], log, cwd=P.root, env=env)
+        run([windres] + _res_args(P, res) + ["-o", ro], log, cwd=P.root, env=env)
         objs.append(ro)
     log("linking")
     os.makedirs(P.game, exist_ok=True)
@@ -888,7 +903,8 @@ def build_all(P, C, disc, log, progress=None):
 # ---------------------------------------------------------------- settings (bmx2.ini)
 
 KEYNAMES = ("up down left right enter backspace tab space lshift rshift lctrl rctrl lalt ralt "
-            "comma period slash semicolon num0 num1 num2 num3 num4 num5 num6 num7 num8 num9 none").split()
+            "comma period slash semicolon num0 num1 num2 num3 num4 num5 num6 num7 num8 num9 f1-f12 escape shift ctrl alt "
+            "none").split()
 B01 = ["0", "1"]
 
 # (key, tab, label, kind, choices, default, comment)

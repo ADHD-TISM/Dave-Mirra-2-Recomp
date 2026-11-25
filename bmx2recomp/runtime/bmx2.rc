@@ -1,7 +1,13 @@
-// Windows resources for bmx2.exe: the icon and the name shown in Explorer and
-// Task Manager. bmx2.ico is made at build time from the player's own disc
-// (tools/make_icon.py) and lives in the generated folder, never in the repo.
+// Windows resources for bmx2.exe: the manifest, the icon and the name shown in
+// Explorer and Task Manager. bmx2.ico is made at build time from the player's
+// own disc (tools/make_icon.py) and lives in the generated folder, never in the
+// repo; the build passes -D BMX2_ICON when it exists.
+#ifdef BMX2_ICON
 1 ICON "bmx2.ico"
+#endif
+
+// UTF-8 paths (see bmx2.manifest). 1 = the process manifest, 24 = RT_MANIFEST.
+1 24 "bmx2.manifest"
 
 // No version numbers: nothing ties them to the release tag, so they would drift.
 1 VERSIONINFO
