@@ -5,7 +5,7 @@ Everything lives in `Desktop\rea\Dave Mirra PS2\` (moved 2026-11-19):
 
 ## Build / run
     python -I tools/recomp_ee.py ../disc/SLUS_201.59 gen --extra extra_ee.txt   # EE ELF -> gen/*.c (without --extra ~70 functions are missing)
-    sh build.sh                                              # -> build/bmx2.exe (clang)
+    sh build.sh                                              # -> build/bmx2.exe (clang); on Linux build/bmx2 (see "Linux")
     build/bmx2.exe --turbo --log-sys 1 --frames 900 ../disc  # headless, logs to stderr
 `OPT="-O1 -DEE_TRACE" sh build.sh` (after `rm -rf build/obj`) records function
 entries; the last 4M are written to `disc/trace.txt` on exit.
@@ -39,6 +39,90 @@ enough that the user sees no stutter with other programs running (see
 laptops"). After v0.1.8: bmx2.exe gets the game's icon and name (see "Exe
 icon and name"). Next: playtest (see "Next step"). The State sections below
 are older snapshots, kept for history.
+
+## Linux (2026-11-25): builds and runs on x86-64 Linux, Windows unchanged
+- Platform layer: `runtime/plat.h`. On Windows it is `<windows.h>` and
+  nothing else, so the Windows code paths are the same as before. On Linux it
+  declares the small Win32 subset the runtime uses (QueryPerformanceCounter =
+  CLOCK_MONOTONIC ns, Sleep, CreateThread/events on pthreads, SRWLOCK =
+  pthread_rwlock, VirtualAlloc = mmap, VK_ codes, _stricmp etc.), implemented
+  in `plat_posix.c`. Fibers: a hand-written x86-64 SysV switch in
+  plat_posix.c (callee-saved registers + MXCSR + x87 control word; stacks are
+  mmap'd MAP_NORESERVE with a guard page; the EE fibers reserve 32 MB as on
+  Windows). ucontext was not used: swapcontext makes a sigprocmask syscall
+  per switch.
+- SDL2 (zlib licence, the system's libsdl2) on Linux only, in
+  `plat_sdl.c` + gs_gl.c/spu2.c branches: window + OpenGL 3.3 core context
+  (SDL_GL_*; GL 1.1 from libGL, the rest loaded as on Windows), event pump
+  (close, F11/Alt+Enter, keys to menu_on_key), monitor choice (3440x1440
+  first, else a non-primary display), vsync (SDL_GL_SetSwapInterval, display
+  Hz from SDL), keyboard (GetAsyncKeyState over SDL_GetKeyboardState, VK
+  codes mapped to scancodes; letters and digits by layout as Windows does),
+  gamepads (SDL_GameController read in XInput's layout, so pad.c's XInput
+  code is unchanged; rumble via SDL_GameControllerRumble), audio (SDL
+  callback pulls from the same ring with the same drift drop; waits for 2
+  buffers at start and after running dry), message box.
+- Threads and SDL: the EE thread pumps events and toggles fullscreen, the
+  graphics thread swaps and reads the drawable size (as WGL does on
+  Windows). SDL does not promise that; it works on X11 with libX11 1.8+
+  (thread-safe Xlib). Native Wayland SDL is untested.
+- No display and `--no-window` (ssh, CI): gs_gl.c makes an EGL context with
+  no surface (Mesa surfaceless platform, else the default display). Ubuntu's
+  SDL 2.0.20 has no offscreen driver, so SDL is not used for that.
+- In-game menu text: GDI on Windows; on Linux `font_posix.c` draws the same
+  layout with stb_truetype (third_party/stb_truetype.h, v1.26, nothing
+  else vendored) and a system TTF (DejaVu/Liberation/Noto Sans from the usual
+  folders, else `fc-match sans`). No font: the menu shows without text.
+- Memory card (mc.c): PATH_SEP and a small directory iterator (opendir on
+  Linux, _findfirst on Windows); SetFileInfo sets only the modified time on
+  Linux (no creation time there). config.c saves bmx2.ini with fsync +
+  rename on Linux.
+- The game runs on a 64 MB-stack thread on Linux (main.c): Windows links
+  bmx2.exe with --stack 64 MB, Linux's main stack is 8 MB.
+- ee.h/gs.h: u64/s64 are `unsigned long long`/`long long` (uint64_t is
+  `unsigned long` on Linux and every log printed %llu). Same type on Windows.
+- build.sh: Linux branch (gcc or clang, `sdl2-config`, links `-lSDL2 -lGL
+  -lEGL -lm -lpthread`, output `build/bmx2`, no resources). `export -f`
+  only under bash (dash stopped there). prof.c (PROF) is Windows only.
+- tools/chdread.c builds on Linux too (char paths there).
+- Launcher: `WIN = os.name == "nt"`. Linux uses the system compiler
+  (BMX2_CC, else cc/gcc/clang) and python3, checks SDL2/GL/EGL headers with
+  the compiler's preprocessor and says which packages to install (Debian,
+  Fedora, Arch lines) instead of downloading; links as build.sh; game is
+  `game/bmx2`; builds `work/chdread` itself the first time a .chd is read;
+  `run` sets PR_SET_PDEATHSIG so the game ends with the launcher (the job
+  object's part on Windows); message boxes via zenity/kdialog.
+  `prepare.done` is now `{data}/game/SLUS_201.59` (copied last, after the
+  exe; the same name on both systems; an existing Windows install already
+  has it, so it is not asked to set up again).
+- Release: release.sh also packs `DaveMirraFreestyleBMX2-<v>-Linux-x86_64.tar.gz`
+  with the program "Dave Mirra Freestyle BMX 2" (launcher/linux_program.sh:
+  runs bmx2launcher.py with python3, pins the project through
+  release_tag.txt -> BMX2_RELEASE_TAG), bmx2launcher.py and
+  recomplauncher.json. recomplauncher.json: both program names, a Linux-only
+  downloads option (project source only), `system.linux` OpenGL 3.3. 0 schema
+  errors (jsonschema 3.2, draft-07).
+- Tested in WSL2 Ubuntu 22.04 (gcc 11.4, SDL 2.0.20, Mesa 23.2 D3D12 on the
+  AMD GPU, WSLg): gen/ from python3 3.10 = the Windows gen/ byte for byte
+  (line endings aside). `--turbo --no-window --frames 1200`: same frame/VU
+  stats as Windows (VU1 15550 recompiled runs, 0 mismatches; batch count
+  3292 vs 3293 with the graphics thread, timing); with GS_THREAD=0 the whole
+  exit dump is identical. Scripted route to Woodward Camp, frame 8400,
+  GS_THREAD=0: exit dump identical, same picture; 14% of pixels differ by >8
+  at edges and fine texture (GPU driver rasterisation, Mesa D3D12 vs AMD's).
+  No display (DISPLAY/WAYLAND_DISPLAY unset): 1200 frames via EGL. Windowed
+  on WSLg: vsync 60 Hz, PulseAudio sound, 400 frames none over 17 ms; keys
+  through XTEST (Return, K, Q, Up, Backspace, Right Shift, 1, 3, Escape for
+  the menu) all reach the pad. Launcher on Linux: prepare from the .bin
+  (exit 0, ~1 min), again ("Already built"), run, and prepare + run from the
+  CD CHD. launcher tests 35 of 35 on both systems (Windows-flow tests run
+  with bl.WIN forced; 3 new Linux tests).
+- Not done / not tested: a gamepad on Linux (no pad in WSL), a real Linux
+  desktop or Steam Deck, RecompLauncher on Linux, a PyInstaller Linux build
+  (the tarball runs the .py with the system python3), an AppImage (the
+  guide wants tarball + AppImage; the tarball needs the system's dev
+  packages anyway), a window icon on Linux, Wayland-native SDL (SDL 2.0.20
+  picks X11/XWayland).
 
 ## RecompLauncher instead of the launcher window (2026-11-24)
 - The user asked to remove the launcher and use RecompLauncher
@@ -126,8 +210,8 @@ are older snapshots, kept for history.
   lists OpenSSL, bzip2, libffi, Zstandard, Tcl/Tk). Old CHCD CHDs:
   the message says extractcd + createcd (chdman copy keeps the metadata,
   not checked).
-- Not done (Recomp Standards): a Linux build, Recomp Achievements (both
-  started in their own sessions, 2026-11-24).
+- Not done (Recomp Standards): Recomp Achievements (started in its own
+  session, 2026-11-24). The Linux build: see "Linux (2026-11-25)".
 - Done since v0.2.1: dumps = Redump disc 12389 (USA 1.00 / Greatest Hits,
   1 track Mode 2, 720728064 bytes, CRC32 f37eefca = the user's .bin), for
   RecompLauncher's verified badge (only a .bin matches; .iso/.chd still

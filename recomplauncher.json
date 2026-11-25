@@ -13,20 +13,29 @@
     }
   ],
   "start": {
-    "program": ["Dave Mirra Freestyle BMX 2.exe"],
+    "program": ["Dave Mirra Freestyle BMX 2.exe", "Dave Mirra Freestyle BMX 2"],
     "args": ["--root", "{data}", "--disc={input:game}", "run"]
   },
   "prepare": {
-    "program": ["Dave Mirra Freestyle BMX 2.exe"],
+    "program": ["Dave Mirra Freestyle BMX 2.exe", "Dave Mirra Freestyle BMX 2"],
     "args": ["--root", "{data}", "--disc={input:game}", "prepare"],
     "label": "Translating the game's code from your disc and building it",
-    "done": ["{data}/game/bmx2.exe"],
+    "done": ["{data}/game/SLUS_201.59"],
     "options": [
       {
         "id": "downloads",
         "label": "Download the build tools and the project's source",
         "note": "From GitHub and python.org, kept in the game's folder: this project's source, the llvm-mingw C compiler and a small Python (about 200 MB).",
         "required": true,
+        "os": ["windows"],
+        "args": ["--accept-downloads"]
+      },
+      {
+        "id": "downloads_linux",
+        "label": "Download the project's source",
+        "note": "From GitHub, kept in the game's folder (a few MB). The game is built with your system's C compiler, Python 3, SDL2 and OpenGL/EGL development files (Debian/Ubuntu: sudo apt install gcc python3 libsdl2-dev libgl-dev libegl-dev).",
+        "required": true,
+        "os": ["linux"],
         "args": ["--accept-downloads"]
       }
     ]
@@ -214,7 +223,7 @@
     "3": "The game reached code that was not recompiled yet. Please open an issue on the project's GitHub page and say what you were doing.",
     "4": "The game ran into an instruction the recompiler doesn't handle. Please open an issue on the project's GitHub page with the log.",
     "6": "The game's graphics thread got a command it does not know. Please open an issue on the project's GitHub page with the log.",
-    "5": "OpenGL 3.3 could not start. Update your graphics driver; on a laptop with two graphics chips, set the game to the dedicated one in Windows' graphics settings.",
+    "5": "OpenGL 3.3 could not start. Update your graphics driver; on a laptop with two graphics chips, set the game to the dedicated one in Windows' graphics settings. On Linux, install your distribution's Mesa or GPU vendor driver.",
     "7": "Your disc image is missing, or it is not Dave Mirra Freestyle BMX 2 (USA, SLUS-20159, version 1.00). Pick your copy again on the game's page."
   },
   "looks": {
@@ -222,6 +231,7 @@
     "reason": "The game is started by the project's own program, so the filters can't reach it. Use the game's own Smooth filter and internal resolution."
   },
   "system": {
-    "windows": { "version": "10", "graphics": { "opengl": "3.3" } }
+    "windows": { "version": "10", "graphics": { "opengl": "3.3" } },
+    "linux": { "graphics": { "opengl": "3.3" } }
   }
 }

@@ -20,7 +20,7 @@
  * Off with `gs_thread = 0` in bmx2.ini or GS_THREAD=0: everything runs on the
  * EE thread as before. */
 #include "rt.h"
-#include <windows.h>
+#include "plat.h"
 #include <stdlib.h>
 
 int g_gs_mt;

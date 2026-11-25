@@ -17,6 +17,28 @@ bl = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(bl)
 
 
+def windows_flow(test):
+    """Runs the test with the launcher's Windows paths (downloaded compiler and Python, resources), on any system."""
+    def run(d):
+        old, bl.WIN = bl.WIN, True
+        try:
+            test(d)
+        finally:
+            bl.WIN = old
+    run.__name__ = test.__name__
+    return run
+
+
+@contextlib.contextmanager
+def linux_flow():
+    """The launcher's Linux paths (system compiler, SDL2), on any system."""
+    old, bl.WIN = bl.WIN, False
+    try:
+        yield
+    finally:
+        bl.WIN = old
+
+
 def check(cond, what):
     """assert that survives python -O"""
     if not cond:
@@ -251,6 +273,7 @@ def test_image_reads_a_chd_through_chdread(d):
     check(bl.is_chd(p) and not bl.is_chd(iso), "is_chd")
 
 
+@windows_flow
 def test_a_newer_pinned_compiler_is_installed_over_an_old_one(d):
     P = bl.Paths(d)
     os.makedirs(os.path.dirname(P.clang))
@@ -498,6 +521,7 @@ def _prepare(accept, **stubs):
     return code, out.getvalue().splitlines(), calls
 
 
+@windows_flow
 def test_prepare_needs_the_downloads_allowed(d):
     code, lines, calls = _prepare(False, toolchain_ok=lambda P: False)
     check(code == bl.NEEDS_DOWNLOADS == 10 and calls == [], (code, calls))
@@ -595,7 +619,7 @@ def test_no_command_uses_recomplauncher_data(d):
 def _no_command_message(d, disc):
     """main() with no command, a built game in d and the chosen disc; the message box text."""
     os.makedirs(os.path.join(d, "game"), exist_ok=True)
-    open(os.path.join(d, "game", "bmx2.exe"), "w").close()
+    open(os.path.join(d, "game", bl.EXE_FILE), "w").close()
     boxes = []
     keep = os.environ.get("RECOMPLAUNCHER_DATA")
     os.environ["RECOMPLAUNCHER_DATA"] = d
@@ -620,6 +644,7 @@ def test_no_command_says_what_is_wrong_with_the_disc(d):
     check("no disc image is chosen" in _no_command_message(d, None), "none chosen")
 
 
+@windows_flow
 def test_download_progress_only_goes_up(d):
     def fake_toolchain(P, log):
         for s in ("  compiler: 0% of 190.0 MB", "  compiler: 100% of 190.0 MB", "  python: 0% of 11.0 MB",
@@ -631,6 +656,7 @@ def test_download_progress_only_goes_up(d):
     check(code == 0 and values == sorted(values), values)
 
 
+@windows_flow
 def test_prepare_keeps_an_installed_project_when_only_the_tools_are_missing(d):
     old = os.environ.get("RECOMPLAUNCHER")
     os.environ["RECOMPLAUNCHER"] = "1"
@@ -657,6 +683,7 @@ def test_build_key_does_not_depend_on_the_folder(d):
     check(keys[0] == keys[1], "build_key changed with the folder")
 
 
+@windows_flow
 def test_resources_add_the_manifest_with_or_without_the_icon(d):
     P = bl.Paths(d)
     rt = os.path.join(P.project, "runtime")
@@ -685,6 +712,51 @@ def test_an_unexpected_error_does_not_escape(d):
         check(bl.guarded_main([]) == 1, "guarded_main did not return 1")
         check(len(boxes) == 1 and "odd data" in boxes[0], "no message box after a double click: %r" % boxes)
         check(bl.guarded_main(["prepare"]) == 1 and len(boxes) == 1, "a message box during prepare")
+
+
+def test_linux_setup_names_the_missing_packages(d):
+    with linux_flow():
+        try:
+            _prepare(True, toolchain_ok=lambda P: False, install_toolchain=bl.install_toolchain,
+                     linux_missing=lambda P: ["SDL2's development files"])
+        except bl.Fail as e:
+            check("SDL2's development files" in str(e) and "apt install" in str(e), str(e))
+        else:
+            check(False, "prepare went on without SDL2")
+
+
+def test_linux_first_setup_from_a_chd_waits_for_the_project(d):
+    # chdread is built from the project: before the first install the image is checked by prepare, not refused
+    chd = os.path.join(d, "game.chd")
+    with open(chd, "wb") as f:
+        f.write(bl.CHD_MAGIC + b"\0" * 2040)
+    with linux_flow():
+        P, C = bl.open_session(os.path.join(d, "root"), chd)
+    check(C.get("disc") == os.path.abspath(chd), C.get("disc"))
+
+
+def test_linux_links_sdl2_opengl_and_egl(d):
+    with linux_flow(), _Stubs(sdl2_flags=lambda kind: ["-lSDL2"] if kind == "libs" else ["-I/usr/include/SDL2"]):
+        a = bl.link_args()
+        check(a[0] == "-lSDL2" and "-lGL" in a and "-lEGL" in a and "-static" not in a, a)
+        f = bl._flags(bl.Paths(d), os.path.join(d, "bmx2recomp", "runtime", "x.c"))
+        check("-I/usr/include/SDL2" in f, f)
+        check(bl._resources(bl.Paths(d)) == [], "resources on Linux")
+
+
+def test_linux_release_pins_through_its_program(d):
+    old = os.environ.get("BMX2_RELEASE_TAG")
+    old_frozen, bl.FROZEN = bl.FROZEN, False
+    try:
+        for value, want in (("v0.3.0", "v0.3.0"), ("v0.3.0-rc1", None), ("", None)):
+            os.environ["BMX2_RELEASE_TAG"] = value
+            check(bl.release_tag() == want, (value, bl.release_tag()))
+    finally:
+        bl.FROZEN = old_frozen
+        if old is None:
+            os.environ.pop("BMX2_RELEASE_TAG", None)
+        else:
+            os.environ["BMX2_RELEASE_TAG"] = old
 
 
 def main():

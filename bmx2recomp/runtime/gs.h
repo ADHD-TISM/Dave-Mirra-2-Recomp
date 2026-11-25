@@ -3,7 +3,7 @@
 #pragma once
 #include <stdint.h>
 #include <string.h>
-typedef uint8_t u8; typedef uint16_t u16; typedef uint32_t u32; typedef uint64_t u64;
+typedef uint8_t u8; typedef uint16_t u16; typedef uint32_t u32; typedef unsigned long long u64;
 typedef int32_t s32;
 
 #define GS_VRAM_SIZE (4u << 20)

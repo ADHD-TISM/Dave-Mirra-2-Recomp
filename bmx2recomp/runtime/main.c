@@ -3,7 +3,7 @@
 #include "config.h"
 #include <stdlib.h>
 #include <math.h>
-#include <windows.h>
+#include "plat.h"
 
 ee_state ee;
 int g_log_sys, g_log_io, g_turbo;
@@ -219,6 +219,25 @@ void check_frame_limit(void) {
         exit(0);
     }
 }
+
+#ifndef _WIN32
+/* Linux: the EE's thread 1 runs on this thread's stack. Windows links bmx2.exe
+ * with a 64 MB stack (build.sh --stack); here the game runs on a thread made
+ * with one (the process's main stack is 8 MB by default). */
+static int app_main(int argc, char **argv);
+struct main_args { int argc; char **argv; int ret; };
+static void *main_thread(void *p) { struct main_args *a = p; a->ret = app_main(a->argc, a->argv); return NULL; }
+int main(int argc, char **argv) {
+    struct main_args a = { argc, argv, 0 };
+    pthread_attr_t at; pthread_t t;
+    pthread_attr_init(&at);
+    pthread_attr_setstacksize(&at, (size_t)64 << 20);
+    if (pthread_create(&t, &at, main_thread, &a)) { LOG("cannot start the game thread\n"); return 1; }
+    pthread_join(t, NULL);
+    return a.ret;
+}
+#define main app_main
+#endif
 
 int main(int argc, char **argv) {
     const char *disc = ".";

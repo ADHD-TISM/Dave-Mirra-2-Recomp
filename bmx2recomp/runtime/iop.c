@@ -5,7 +5,7 @@
 #include "rt.h"
 #include "iop.h"
 #include "chd_disc.h"
-#include <windows.h>
+#include "plat.h"
 #include <stdlib.h>
 #include <stdarg.h>
 
@@ -43,7 +43,7 @@ static int icur, in_iop;
 static void *ret_fiber;
 static u64 order_ctr = 1;
 static FILE *disc_image;
-const char *g_disc_image = "..\\Dave Mirra Freestyle BMX 2 (USA)\\SLUS-20159 (1.00).bin";
+const char *g_disc_image = ".." PATH_SEP "Dave Mirra Freestyle BMX 2 (USA)" PATH_SEP "SLUS-20159 (1.00).bin";
 
 #define A0 IR[4]
 #define A1 IR[5]

@@ -1,12 +1,13 @@
 #!/usr/bin/env python3
-"""Dave Mirra Freestyle BMX 2 (PS2) recompilation, on Windows: builds the game
-from your own disc and starts it. RecompLauncher (recomplauncher.json) runs
-it; it has no window of its own.
+"""Dave Mirra Freestyle BMX 2 (PS2) recompilation, on Windows and Linux (x86-64):
+builds the game from your own disc and starts it. RecompLauncher
+(recomplauncher.json) runs it; it has no window of its own.
 
 You need your own copy of the game (SLUS-20159, USA, version 1.00) as a
-.bin/.cue, an .iso or a .chd. The build tools (a C compiler and Python for the code
-generators) are downloaded into tools/, only with --accept-downloads, and
-nothing is written outside the root folder.
+.bin/.cue, an .iso or a .chd. On Windows the build tools (a C compiler and Python for the code
+generators) are downloaded into tools/, only with --accept-downloads; on Linux the
+system's compiler, Python 3, SDL2 and OpenGL/EGL development files are used (nothing
+but the project is downloaded). Nothing is written outside the root folder.
 
     Dave Mirra Freestyle BMX 2.exe --root DIR --disc=FILE prepare --accept-downloads
                                                download the tools, build the game (RecompLauncher's setup step)
@@ -36,6 +37,7 @@ import shutil
 import struct
 import subprocess
 import sys
+import tempfile
 import threading
 import time
 import urllib.error
@@ -65,8 +67,14 @@ PY_URL = "https://www.python.org/ftp/python/3.12.8/python-3.12.8-embed-amd64.zip
 PY_SHA256 = "8d3f33be9eb810f23c102f08475af2854e50484b8e4e06275e937be61ce3d2fb"
 
 FROZEN = bool(getattr(sys, "frozen", False))
-NO_WINDOW = 0x08000000
-EXE_FILE = "bmx2.exe"
+WIN = os.name == "nt"
+NO_WINDOW = 0x08000000 if WIN else 0        # Popen creationflags (Windows only)
+EXE_FILE = "bmx2.exe" if WIN else "bmx2"
+# Linux builds with the system's compiler, Python 3, SDL2 and OpenGL/EGL headers: nothing is downloaded but the
+# project. This is what to install when they are missing (the last line of a failed setup step).
+LINUX_PACKAGES = ("Debian/Ubuntu: sudo apt install gcc python3 libsdl2-dev libgl-dev libegl-dev; "
+                  "Fedora: sudo dnf install gcc python3 SDL2-devel mesa-libGL-devel mesa-libEGL-devel; "
+                  "Arch: sudo pacman -S gcc python sdl2 mesa")
 INI_FILE = "bmx2.ini"
 UA = {"User-Agent": "bmx2recomp-launcher"}
 MARKER = ".downloaded-by-launcher"     # in a project folder the launcher installed (and so may replace)
@@ -119,11 +127,17 @@ class Paths:
 
     @property
     def clang(self):
-        # BMX2_CLANG: a developer's own llvm-mingw clang instead of the downloaded one
+        """The C compiler. Windows: BMX2_CLANG (a developer's own llvm-mingw clang) or the downloaded one.
+        Linux: BMX2_CC, else the system's cc, gcc or clang ("" when there is none)."""
+        if not WIN:
+            cc = os.environ.get("BMX2_CC")
+            return cc if cc else next((shutil.which(c) for c in ("cc", "gcc", "clang") if shutil.which(c)), "")
         return os.environ.get("BMX2_CLANG") or os.path.join(self.llvm, "bin", "x86_64-w64-mingw32-clang.exe")
 
     @property
     def tool_python(self):
+        if not WIN:      # the system's Python 3 (a packaged launcher carries no Python of its own there)
+            return (shutil.which("python3") or "") if FROZEN else sys.executable
         return os.path.join(self.pydir, "python.exe") if FROZEN else sys.executable
 
 
@@ -384,25 +398,99 @@ def _mark_tool(folder, name):
 
 
 def compiler_id(P):
-    """Which compiler builds the objects, for their cache keys: the pinned llvm-mingw, or for a developer's own
-    (BMX2_CLANG) its size and date, so a new compiler at the same path recompiles everything."""
+    """Which compiler builds the objects, for build_key and the object keys: the pinned llvm-mingw; a developer's
+    own (BMX2_CLANG) by its size and date; on Linux the system compiler's version line (its path, /usr/bin/cc,
+    stays across upgrades and switches). A new compiler at the same path then recompiles everything."""
     if os.environ.get("BMX2_CLANG"):
         try:
             st = os.stat(P.clang)
             return "own %d %d" % (st.st_size, st.st_mtime_ns)
         except OSError:
             return "own missing"
+    if not WIN:
+        try:
+            r = subprocess.run([P.clang, "--version"], capture_output=True, text=True)
+            return (r.stdout.splitlines() or [""])[0]
+        except OSError:
+            return P.clang
     return LLVM_NAME
 
 
+_sdl2_flags = {}
+
+
+def sdl2_flags(kind):
+    """Linux: SDL2's compile ("cflags") or link ("libs") options from sdl2-config or pkg-config, or None."""
+    if kind not in _sdl2_flags:
+        _sdl2_flags[kind] = _sdl2_query(kind)
+    return _sdl2_flags[kind]
+
+
+def _sdl2_query(kind):
+    for cmd in (["sdl2-config", "--" + kind], ["pkg-config", "--" + kind, "sdl2"]):
+        if shutil.which(cmd[0]):
+            try:
+                r = subprocess.run(cmd, capture_output=True, text=True)
+            except OSError:
+                continue
+            if r.returncode == 0:
+                return r.stdout.split()
+    return None
+
+
+_linux_missing = {}
+
+
+def linux_missing(P):
+    """Linux: what the build still needs from the system, in words for the player ([] when nothing). Checked once
+    per compiler: a compiler, Python 3, and SDL2, OpenGL and EGL headers (tried with the compiler's preprocessor)."""
+    cc = P.clang
+    if cc in _linux_missing:
+        return _linux_missing[cc]
+    miss = []
+    if not cc:
+        miss.append("a C compiler (gcc or clang)")
+    if not P.tool_python:
+        miss.append("Python 3")
+    cflags = sdl2_flags("cflags")
+    if cflags is None:
+        miss.append("SDL2's development files")
+    elif cc:
+        src = "#include <SDL.h>\n#include <GL/gl.h>\n#include <EGL/egl.h>\n"
+        try:
+            r = subprocess.run([cc, "-x", "c", "-E", "-o", os.devnull, "-"] + cflags, input=src, capture_output=True,
+                               text=True)
+            bad = r.returncode != 0
+        except OSError:
+            bad = True
+        if not bad:     # the headers can be there without the libraries to link (libGL.so, libEGL.so)
+            tmpdir = tempfile.mkdtemp(prefix="bmx2-linktest-")
+            exe = os.path.join(tmpdir, "t")
+            try:
+                r = subprocess.run([cc, "-x", "c", "-", "-o", exe] + cflags + (sdl2_flags("libs") or ["-lSDL2"])
+                                   + ["-lGL", "-lEGL"], input=src + "int main(void) { return 0; }\n",
+                                   capture_output=True, text=True)
+                bad = r.returncode != 0
+            except OSError:
+                bad = True
+            finally:
+                shutil.rmtree(tmpdir, ignore_errors=True)
+        if bad:
+            miss.append("the OpenGL and EGL development files")
+    _linux_missing[cc] = miss
+    return miss
+
+
 def compiler_current(P):
+    if not WIN:
+        return not linux_missing(P)
     if os.environ.get("BMX2_CLANG"):        # a developer's own compiler: theirs to keep current
         return os.path.isfile(P.clang)
     return _tool_current(P.llvm, P.clang, "llvm", LLVM_NAME)
 
 
 def python_current(P):
-    return not FROZEN or _tool_current(P.pydir, P.tool_python, "python", PY_NAME)
+    return not WIN or not FROZEN or _tool_current(P.pydir, P.tool_python, "python", PY_NAME)
 
 
 def toolchain_ok(P):
@@ -412,6 +500,12 @@ def toolchain_ok(P):
 
 
 def install_toolchain(P, log):
+    if not WIN:     # nothing to download: the system's packages
+        miss = linux_missing(P)
+        if miss:
+            raise Fail("Missing: %s. Install them, then run the setup again. %s" % (", ".join(miss), LINUX_PACKAGES))
+        log("build tools: %s and %s" % (P.clang, P.tool_python))
+        return
     if not compiler_current(P):
         z = os.path.join(P.dl, LLVM_NAME + ".zip")
         if not (os.path.isfile(z) and sha256_file(z) == LLVM_SHA256):
@@ -463,9 +557,11 @@ def fetch_project_zip(P, tag, log):
 
 
 def release_tag():
-    """The project version a packaged release was made with (launcher/release.sh packs it in), or None."""
+    """The project version a packaged release was made with (launcher/release.sh packs it in), or None. The Linux
+    release runs this file from source: its program (launcher/linux_program.sh) passes BMX2_RELEASE_TAG."""
     if not FROZEN:      # run from source: the project is whatever is installed or downloaded
-        return None
+        tag = os.environ.get("BMX2_RELEASE_TAG", "").strip()
+        return tag if tag and version_tuple(tag) and tag.startswith("v") else None
     try:
         with open(os.path.join(getattr(sys, "_MEIPASS", ""), "release_tag.txt"), encoding="ascii") as f:
             tag = f.read().strip()
@@ -578,8 +674,31 @@ CHD_MAGIC = b"MComprHD"
 CHD_CHUNK = 256          # sectors per chdread call
 
 
+_chd_session = []      # Linux: the Paths of open_session, where chd_tool builds chdread
+
+
 def chd_tool():
-    """chdread.exe (bmx2recomp/tools/chdread.c): packed into the program by build_exe.sh, or next to this file."""
+    """chdread.exe (bmx2recomp/tools/chdread.c): packed into the program by build_exe.sh, or next to this file.
+    Linux: work/chdread, built from the project with the system compiler the first time a .chd is read."""
+    if not WIN:
+        if not _chd_session:
+            raise ChdFail("CHD images need the project installed (run the setup step)")
+        P = _chd_session[0]
+        out = os.path.join(P.work, "chdread")
+        srcs = [os.path.join(P.project, *p) for p in (("tools", "chdread.c"), ("runtime", "chd_disc.c"),
+                                                     ("third_party", "libchdr_all.c"))]
+        if not all(os.path.isfile(s) for s in srcs):
+            raise ChdFail("this project version cannot read .chd images")
+        if not os.path.isfile(out) or any(os.path.getmtime(s) > os.path.getmtime(out) for s in srcs):
+            if not P.clang:
+                raise ChdFail("reading a .chd needs a C compiler. " + LINUX_PACKAGES)
+            os.makedirs(P.work, exist_ok=True)
+            r = subprocess.run([P.clang, "-O2", "-w"] + srcs + ["-o", out + ".tmp", "-lm", "-lpthread"],
+                               capture_output=True, text=True)
+            if r.returncode:
+                raise ChdFail("could not build chdread: %s" % (r.stderr.strip()[-500:] or r.returncode))
+            os.replace(out + ".tmp", out)
+        return out
     here = getattr(sys, "_MEIPASS", None) if FROZEN else os.path.dirname(os.path.abspath(__file__))
     p = os.path.join(here or "", "chdread.exe")
     if not os.path.isfile(p):
@@ -892,12 +1011,21 @@ def _flags(P, src):
     f = ["-O2", "-fno-strict-aliasing", "-fwrapv", "-I", os.path.join(P.project, "runtime"), "-I", P.gen, "-I", P.gen_vu]
     if os.path.dirname(src) == os.path.join(P.project, "runtime"):
         f += ["-Wall", "-Wno-unused-but-set-variable", "-Wno-unused-function"]
+        if not WIN:
+            f += ["-Wno-misleading-indentation"] + (sdl2_flags("cflags") or [])   # as build.sh
     else:
         f += ["-w"]
     return f
 
 
 LINK = ["-static", "-Wl,--stack,67108864", "-lwinmm", "-lgdi32", "-luser32", "-lopengl32"]
+
+
+def link_args():
+    """The link options: Windows' LINK, or on Linux SDL2, OpenGL and EGL (as build.sh)."""
+    return LINK if WIN else (sdl2_flags("libs") or ["-lSDL2"]) + ["-lGL", "-lEGL", "-lm", "-lpthread"]
+
+
 RES_ARGS = ["-O", "coff"]     # windres: the icon as a COFF object the linker takes like any other
 
 
@@ -906,7 +1034,7 @@ def _resources(P):
     v0.1.9 to v0.2.0 have no manifest and need the icon; v0.1.8 and older have no bmx2.rc."""
     rt = os.path.join(P.project, "runtime")
     rc, man, ico = os.path.join(rt, "bmx2.rc"), os.path.join(rt, "bmx2.manifest"), os.path.join(P.gen, "bmx2.ico")
-    if not os.path.isfile(rc):
+    if not WIN or not os.path.isfile(rc):      # Linux executables carry no resources
         return []
     if os.path.isfile(man):
         return [rc, man] + ([ico] if os.path.isfile(ico) else [])
@@ -931,7 +1059,7 @@ def build_key(P):
     h = hashlib.sha256(b"build1")
     flags = [a for d in (os.path.join(P.project, "runtime"), P.gen) for a in _flags(P, os.path.join(d, "x.c"))
              if not os.path.isabs(a)]
-    h.update(repr((LINK, compiler_id(P), flags, RES_ARGS)).encode())   # the compile, icon and link recipe, the compiler
+    h.update(repr((link_args(), compiler_id(P), flags, RES_ARGS)).encode())   # the compile, icon and link recipe, the compiler
     for p in hdr + src + _resources(P):
         h.update(os.path.basename(p).encode())
         h.update(source_bytes(p))
@@ -1025,9 +1153,7 @@ def compile_game(P, C, log, progress=None):
     log("linking")
     os.makedirs(P.game, exist_ok=True)
     tmp = P.exe + ".new"
-    run([P.clang] + objs + ["-o", tmp] + LINK, log, cwd=P.root, env=env)
-    # bmx2.exe goes in last: it is the file RecompLauncher takes as "built" (recomplauncher.json prepare.done)
-    shutil.copyfile(os.path.join(P.discfiles, GAME_EXE), os.path.join(P.game, GAME_EXE))   # the runtime loads it at start
+    run([P.clang] + objs + ["-o", tmp] + link_args(), log, cwd=P.root, env=env)
     if not os.path.isfile(P.ini):
         with open(P.ini, "w", encoding="utf-8", newline="\n") as f:
             f.write(default_ini_text())
@@ -1036,6 +1162,11 @@ def compile_game(P, C, log, progress=None):
     except OSError:
         os.remove(tmp)
         raise Fail("%s is in use: close the game and build again" % EXE_FILE)
+    # the game's ELF (the runtime loads it at start) goes in last: it is the file RecompLauncher takes as "built"
+    # (recomplauncher.json prepare.done), the same name on Windows and Linux (bmx2.exe / bmx2)
+    elf = os.path.join(P.game, GAME_EXE)
+    shutil.copyfile(os.path.join(P.discfiles, GAME_EXE), elf + ".new")
+    os.replace(elf + ".new", elf)
     C.set("build_chd", any(os.path.basename(p) == "libchdr_all.c" for p in src))   # before build_key: built_ok trusts it
     C.set("build_key", bk)
     log("game built: %s" % P.exe)
@@ -1140,19 +1271,39 @@ def play(P, C, log, wait=False, extra=()):
             pass
     logf = open(os.path.join(P.game, "bmx2.log"), "w")    # what the game prints, for when something goes wrong
     try:
-        proc = subprocess.Popen(args, cwd=P.game, creationflags=NO_WINDOW, stdout=logf, stderr=subprocess.STDOUT)
+        how = {"creationflags": NO_WINDOW} if WIN else {"preexec_fn": _end_with_parent()} if wait else {}
+        proc = subprocess.Popen(args, cwd=P.game, stdout=logf, stderr=subprocess.STDOUT, **how)
     finally:
         logf.close()
     log("started the game (its messages go to %s)" % os.path.join(P.game, "bmx2.log"))
     if not wait:
         return 0
-    job = end_with_us(proc)   # kept open while waiting: when this program is ended, Windows ends the game too
+    job = end_with_us(proc) if WIN else None   # kept open while waiting: when this program is ended, Windows ends the game too
     try:
         return proc.wait()
     finally:
         if job:
             import ctypes
             ctypes.windll.kernel32.CloseHandle(job)
+
+
+def _end_with_parent():
+    """Linux: a function for Popen's preexec_fn. In the game's process before it starts, it asks the kernel for
+    SIGTERM when this program ends (RecompLauncher stops the program it started, which is this one), as Windows'
+    job does there. Made here, before the fork; if this program already ended in between, the game does not start."""
+    import ctypes
+    import signal
+    parent = os.getpid()
+    try:
+        prctl = ctypes.CDLL(None, use_errno=True).prctl
+    except (OSError, AttributeError):
+        return None
+
+    def child():
+        prctl(1, int(signal.SIGTERM), 0, 0, 0)   # PR_SET_PDEATHSIG
+        if os.getppid() != parent:
+            os._exit(1)
+    return child
 
 
 def end_with_us(proc):
@@ -1233,9 +1384,13 @@ def open_session(root, disc=None):
     # RecompLauncher gives its data folder as RECOMPLAUNCHER_DATA too, also when the player skipped Easy Setup and
     # this program starts with no arguments: the build is there, not next to the program
     P = Paths(root or os.environ.get("RECOMPLAUNCHER_DATA") or default_root())
+    _chd_session[:] = [P]       # Linux: chd_tool builds chdread under this root
     C = Config(P.cfg)
     if disc:
-        check_disc(C, disc)
+        # Linux reads a .chd with chdread built from the project: before the first install there is none, so
+        # prepare checks the image after it has installed the project
+        if WIN or project_ok(P) or not (image_present(disc) and is_chd(resolve_image(disc))):
+            check_disc(C, disc)
         C.set("disc", os.path.abspath(disc))
     else:
         adopt_disc(P, C)
@@ -1257,6 +1412,8 @@ def prepare(P, C, accept, log):
     disc = C.get("disc")
     if not disc:
         raise DiscFail("prepare: no disc image given (--disc=FILE)")
+    if not WIN and not toolchain_ok(P):
+        install_toolchain(P, log)    # nothing to download on Linux: says which system packages are missing
     if not (toolchain_ok(P) and project_ok(P)) and not accept:
         print("the build tools and the project are not downloaded yet, and --accept-downloads was not given",
               flush=True)
@@ -1398,6 +1555,18 @@ def attach_std_streams():
 
 def message_box(text):
     """Say something when started without a console (a double click), where nothing printed is seen."""
+    if not WIN:     # the desktop's own dialog tool, when there is one and a display
+        if not (os.environ.get("DISPLAY") or os.environ.get("WAYLAND_DISPLAY")):
+            return
+        for cmd in (["zenity", "--info", "--title", GAME_NAME, "--text", text],
+                    ["kdialog", "--title", GAME_NAME, "--msgbox", text]):
+            if shutil.which(cmd[0]):
+                try:
+                    subprocess.run(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+                    return
+                except OSError:
+                    pass
+        return
     try:
         import ctypes
         ctypes.windll.user32.MessageBoxW(None, text, GAME_NAME, 0x40)

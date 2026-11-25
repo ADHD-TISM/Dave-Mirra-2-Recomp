@@ -1,27 +1,44 @@
 #!/bin/sh
-# Build bmx2.exe: generated EE code (gen/) + runtime. Objects cached in build/.
+# Build bmx2.exe (Windows, llvm-mingw clang) or bmx2 (Linux x86-64: gcc or clang
+# + SDL2 + libGL): generated EE code (gen/) + runtime. Objects cached in build/.
 set -e
 cd "$(dirname "$0")"
-CC=${CC:-clang}
+case "$(uname -s)" in Linux) LINUX=1 ;; *) LINUX= ;; esac
+if [ -n "$LINUX" ]; then
+  if [ -z "$CC" ]; then if command -v clang >/dev/null; then CC=clang; else CC=gcc; fi; fi
+  SDL_CFLAGS=$(sdl2-config --cflags 2>/dev/null || pkg-config --cflags sdl2) || { echo "SDL2 development files are missing (Debian/Ubuntu: apt install libsdl2-dev)"; exit 1; }
+  SDL_CFLAGS="$SDL_CFLAGS -Wno-misleading-indentation"   # gcc's style warning on one-line ifs the code uses throughout
+  SDL_LIBS=$(sdl2-config --libs 2>/dev/null || pkg-config --libs sdl2)
+else
+  CC=${CC:-clang}
+  SDL_CFLAGS=
+fi
 OPT=${OPT:--O2}
 mkdir -p build/obj
-CFLAGS="$OPT -g -fno-strict-aliasing -fwrapv -Wall -Wno-unused-but-set-variable -Iruntime -Igen -Igen_vu -Wno-unused-function"
+CFLAGS="$OPT -g -fno-strict-aliasing -fwrapv -Wall -Wno-unused-but-set-variable -Iruntime -Igen -Igen_vu -Wno-unused-function $SDL_CFLAGS"
 compile() {
   src=$1; obj=build/obj/$(echo "$src" | tr '/' '_' | sed 's/\.c$/.o/')
   if [ ! -f "$obj" ] || [ "$src" -nt "$obj" ] || [ runtime/ee.h -nt "$obj" ]; then
     $CC $CFLAGS -c "$src" -o "$obj" || exit 1
   fi
 }
-export -f compile 2>/dev/null || true
+[ -z "$BASH_VERSION" ] || export -f compile 2>/dev/null || true   # bash only (dash, Linux sh, stops at export -f)
 export CC CFLAGS
 ls gen/*.c gen_iop/*.c runtime/*.c | xargs -P 16 -I{} sh -c '
   src={}; obj=build/obj/$(echo "$src" | tr "/" "_" | sed "s/\.c$/.o/")
-  if [ ! -f "$obj" ] || [ "$src" -nt "$obj" ] || [ runtime/ee.h -nt "$obj" ] || [ runtime/rt.h -nt "$obj" ] || [ runtime/iop.h -nt "$obj" ] || { case "$src" in runtime/*) [ runtime/config.h -nt "$obj" ] || [ runtime/gs.h -nt "$obj" ] || [ runtime/chd_disc.h -nt "$obj" ] || { [ "$src" = runtime/chd_disc.c ] && [ -n "$(find third_party/libchdr/include -newer "$obj" -name "*.h" | head -1)" ]; };; *) false;; esac; } || { [ "$src" = runtime/vu.c ] && [ -f gen_vu/vu1_rec.h ] && [ gen_vu/vu1_rec.h -nt "$obj" ]; }; then
+  if [ ! -f "$obj" ] || [ "$src" -nt "$obj" ] || [ runtime/ee.h -nt "$obj" ] || [ runtime/rt.h -nt "$obj" ] || [ runtime/iop.h -nt "$obj" ] || { case "$src" in runtime/*) [ runtime/config.h -nt "$obj" ] || [ runtime/plat.h -nt "$obj" ] || { [ "$src" = runtime/font_posix.c ] && [ third_party/stb_truetype.h -nt "$obj" ]; } || [ runtime/gs.h -nt "$obj" ] || [ runtime/chd_disc.h -nt "$obj" ] || { [ "$src" = runtime/chd_disc.c ] && [ -n "$(find third_party/libchdr/include -newer "$obj" -name "*.h" | head -1)" ]; };; *) false;; esac; } || { [ "$src" = runtime/vu.c ] && [ -f gen_vu/vu1_rec.h ] && [ gen_vu/vu1_rec.h -nt "$obj" ]; }; then
     $CC $CFLAGS -c "$src" -o "$obj" || exit 255
   fi'
 # libchdr (CHD images, runtime/chd_disc.c): third-party code, built once without warnings
 if [ ! -f build/obj/libchdr_all.o ] || [ -n "$(find third_party -newer build/obj/libchdr_all.o -name '*.[ch]' | head -1)" ]; then
   $CC $OPT -w -c third_party/libchdr_all.c -o build/obj/libchdr_all.o
+fi
+if [ -n "$LINUX" ]; then
+  # no exe resources on Linux (the launcher's .desktop entry carries the icon)
+  rm -f build/obj/bmx2_res.o
+  $CC -g build/obj/*.o -o build/bmx2 $SDL_LIBS -lGL -lEGL -lm -lpthread
+  echo "built build/bmx2"
+  exit 0
 fi
 # icon (from the disc's memory card icon) and name: runtime/bmx2.rc
 if [ -f ../disc/ASSETS/ICON.DAT ] && { [ ! -f gen/bmx2.ico ] || [ tools/make_icon.py -nt gen/bmx2.ico ]; }; then

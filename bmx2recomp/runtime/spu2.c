@@ -15,8 +15,10 @@
  * --no-audio (g_no_audio) keeps the mixing but opens no device.
  */
 #include "rt.h"
-#include <windows.h>
+#include "plat.h"
+#ifdef _WIN32
 #include <mmsystem.h>
+#endif
 #include <stdlib.h>
 
 #define RATE 48000
@@ -317,7 +319,7 @@ void spu2_update(void) {
         if (r > 32767) r = 32767; if (r < -32768) r = -32768;
         u32 fr = (u16)l | ((u32)(u16)r << 16);
         u32 w = wr;
-        if (w - rd < RING) { ring[w & (RING - 1)] = fr; wr = w + 1; }
+        if (w - __atomic_load_n(&rd, __ATOMIC_ACQUIRE) < RING) { ring[w & (RING - 1)] = fr; __atomic_store_n(&wr, w + 1, __ATOMIC_RELEASE); }   /* the frame before the count */
         if (wav) { fwrite(&fr, 4, 1, wav); wav_frames++; }
         mixed++; n_spu_frames++;
     }
@@ -338,6 +340,7 @@ static void wav_header(void) {
 static void wav_close(void) { if (wav) { wav_header(); fclose(wav); wav = 0; } }
 
 /* ---- host output: waveOut, a thread refills buffers as they finish -------------- */
+#ifdef _WIN32
 static HWAVEOUT wo;
 static WAVEHDR hdr[NWBUF];
 static u32 wbuf[NWBUF][WBUF];
@@ -400,6 +403,48 @@ void spu2_init(void) {
     SetEvent(wev);
     LOG("spu2: audio out 48 kHz stereo (waveOut, %d x %d frames)\n", NWBUF, WBUF);
 }
+#else
+/* ---- host output on Linux: SDL2's audio thread pulls from the ring ------------------ */
+#include <SDL.h>
+static int primed;   /* 0: wait until 2 buffers are mixed (start-up, after running dry) */
+static void audio_pull(void *u, Uint8 *out, int len) {
+    (void)u;
+    /* acquire: the frames below wr are written before it (the mixer's release store) */
+    u32 *o = (u32 *)out, want = (u32)len / 4, avail = __atomic_load_n(&wr, __ATOMIC_ACQUIRE) - rd;
+    if (!primed) {
+        if (avail < 2 * WBUF) { memset(out, 0, (size_t)len); return; }
+        primed = 1;
+    }
+    u32 n = avail < want ? avail : want;
+    /* as the waveOut thread: while more than ~64 ms is waiting, skip 1 frame in 256 */
+    u32 r0 = rd, src = 0, drop = avail > 3 * WBUF;
+    for (u32 i = 0; i < n; i++, src++) {
+        if (drop && i && (i & 255) == 0 && src + 1 < avail) { src++; n_spu_dropped++; }
+        o[i] = ring[(r0 + src) & (RING - 1)];
+    }
+    __atomic_store_n(&rd, r0 + src, __ATOMIC_RELEASE);   /* the slots are read before the mixer may reuse them */
+    if (n < want) {                                     /* ran dry: silence, then wait for 2 buffers again */
+        memset(o + n, 0, (size_t)(want - n) * 4);
+        primed = 0;
+        extern volatile int g_menu_open;
+        if (g_frame > 120 && !g_menu_open) { n_spu_underruns++; if (g_log_sys && n_spu_underruns <= 60) LOG("spu2: underrun at frame %llu\n", (unsigned long long)g_frame); }
+    }
+}
+
+void spu2_init(void) {
+    const char *w = getenv("SPU_WAV");
+    if (w && (wav = fopen(w, "wb"))) { u8 z[44] = { 0 }; fwrite(z, 1, 44, wav); atexit(wav_close); LOG("spu2: writing %s\n", w); }
+    if (g_no_audio || g_turbo) { LOG("spu2: no audio output (%s)\n", g_turbo ? "--turbo" : "--no-audio"); return; }
+    SDL_AudioSpec want = { 0 }, got;
+    want.freq = RATE; want.format = AUDIO_S16SYS; want.channels = 2; want.samples = WBUF; want.callback = audio_pull;
+    SDL_AudioDeviceID dev;
+    if (SDL_InitSubSystem(SDL_INIT_AUDIO) || !(dev = SDL_OpenAudioDevice(NULL, 0, &want, &got, 0))) {
+        LOG("spu2: cannot open audio output (%s)\n", SDL_GetError()); return;
+    }
+    SDL_PauseAudioDevice(dev, 0);
+    LOG("spu2: audio out 48 kHz stereo (SDL %s, %d frames per pull)\n", SDL_GetCurrentAudioDriver(), got.samples);
+}
+#endif
 
 void spu2_stats(void) {
     LOG("spu2: %llu key-ons, %llu volume reads in sweep mode (not modelled)\n", (unsigned long long)n_kon, (unsigned long long)n_sweep_vol);

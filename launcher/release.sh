@@ -1,7 +1,8 @@
 #!/bin/sh
 # Pack a release: DaveMirraFreestyleBMX2-<version>-Windows-x64.zip with "Dave Mirra Freestyle BMX 2.exe",
 # recomplauncher.json (RecompLauncher installs from it) and THIRD_PARTY_NOTICES.txt (the licences of the code
-# built into the exe) at the top. Attach the zip to the GitHub release.
+# built into the exe) at the top, and DaveMirraFreestyleBMX2-<version>-Linux-x86_64.tar.gz (see the end).
+# Attach both to the GitHub release.
 # usage: sh launcher/release.sh v1.2.3 [out folder]      (out folder: launcher/dist)
 # Needs what build_exe.sh needs.
 set -e
@@ -39,3 +40,24 @@ with zipfile.ZipFile(out + ".tmp", "w", zipfile.ZIP_DEFLATED) as z:
 os.replace(out + ".tmp", out)
 ' "$ZIP" "$OUT/Dave Mirra Freestyle BMX 2.exe" "$HERE/../recomplauncher.json" "$OUT/THIRD_PARTY_NOTICES.txt"
 echo "packed $ZIP"
+# Linux: DaveMirraFreestyleBMX2-<version>-Linux-x86_64.tar.gz with the program "Dave Mirra Freestyle BMX 2"
+# (linux_program.sh: runs bmx2launcher.py with the system's Python 3), bmx2launcher.py, release_tag.txt (the pinned
+# project version) and recomplauncher.json. No binaries: the game and chdread are built on the player's PC.
+TGZ="$OUT/DaveMirraFreestyleBMX2-$V-Linux-x86_64.tar.gz"
+${PYTHON:-python} -c '
+import io, os, sys, tarfile, time
+out, tag, prog, launcher, manifest = sys.argv[1:]
+def add(t, name, data, mode):
+    i = tarfile.TarInfo(name); i.size = len(data); i.mode = mode; i.mtime = int(time.time())
+    t.addfile(i, io.BytesIO(data))
+def read(p):
+    with open(p, "rb") as f:
+        return f.read().replace(b"\r\n", b"\n")     # a Windows checkout may have CRLF: sh and python want LF
+with tarfile.open(out + ".tmp", "w:gz") as t:
+    add(t, "Dave Mirra Freestyle BMX 2", read(prog), 0o755)
+    add(t, "bmx2launcher.py", read(launcher), 0o644)
+    add(t, "release_tag.txt", (tag + "\n").encode(), 0o644)
+    add(t, "recomplauncher.json", read(manifest), 0o644)
+os.replace(out + ".tmp", out)
+' "$TGZ" "$V" "$HERE/linux_program.sh" "$HERE/bmx2launcher.py" "$HERE/../recomplauncher.json"
+echo "packed $TGZ"

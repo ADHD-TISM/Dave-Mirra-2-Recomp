@@ -16,7 +16,7 @@
  * mismatch control, IDCT) plus the IPU's own command set: BCLR, IDEC, BDEC,
  * VDEC, FDEC, SETIQ, SETVQ, CSC, PACK, SETTH. */
 #include "rt.h"
-#include <windows.h>
+#include "plat.h"
 #include <math.h>
 
 u32 *hw_dma_regs(int ch);
