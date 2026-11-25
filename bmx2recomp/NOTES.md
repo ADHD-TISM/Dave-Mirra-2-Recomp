@@ -103,7 +103,7 @@ are older snapshots, kept for history.
   parse is chd_disc_parse_track1, tested by tools/test_chd_disc.c (build
   line in the file, with -fsanitize=address; 9 cases incl. 200-character
   fields). build_exe.sh stops when Python's LICENSE.txt is missing (it also
-  lists OpenSSL, zlib, libffi... that PyInstaller bundles). Old CHCD CHDs:
+  lists OpenSSL, bzip2, libffi, Zstandard, Tcl/Tk). Old CHCD CHDs:
   the message says extractcd + createcd (chdman copy keeps the metadata,
   not checked).
 - Not done (Recomp Standards): a Linux build, Recomp Achievements, dumps values,

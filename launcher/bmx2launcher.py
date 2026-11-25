@@ -1039,7 +1039,8 @@ def default_ini_text():
         if comment:
             out.append("# " + comment)
         if key == "key_up":
-            out.append("# Keyboard: a letter or digit, or " + " ".join(KEYNAMES) + "; two keys separated by a comma")
+            out.append("# Keyboard: a letter or digit, or " + " ".join('"%s"' % k if " " in k else k for k in KEYNAMES)
+                       + "; two keys separated by a comma")
         out.append("%s = %s" % (key, dflt))
     return "\n".join(out) + "\n"
 

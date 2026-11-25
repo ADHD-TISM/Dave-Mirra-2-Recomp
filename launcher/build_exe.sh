@@ -38,7 +38,7 @@ parts = [("libchdr (CHD reading, in chdread.exe)", read("LICENSE.txt").strip()),
          ("miniz 3.1.2 (in libchdr)", miniz),
          ("LZMA SDK 26.02 (in libchdr)", read("deps", "lzma-26.02", "LICENSE").strip()),
          ("dr_flac (in libchdr)", flac)]
-py = os.path.join(sys.base_prefix, "LICENSE.txt")     # Python's, with the libraries it bundles (OpenSSL, zlib, ...)
+py = os.path.join(sys.base_prefix, "LICENSE.txt")     # Python's, with the libraries it bundles (OpenSSL, bzip2, libffi, ...)
 if not os.path.isfile(py):
     sys.exit("no %s: build with a full Python install, so its licences go in the notices" % py)
 with open(py, encoding="utf-8", errors="replace") as f:

@@ -20,7 +20,7 @@ static uint32_t lead;               /* frames before LSN 0: a track 1 pregap sto
 
 int chd_disc_parse_track1(const char *meta, int v2, char *err, size_t errlen,
                           uint32_t *frames, uint32_t *lead_out, int *off_out) {
-    char type[32] = { 0 }, sub[32], pgtype[32] = { 0 }, pgsub[32];
+    char type[32] = { 0 }, sub[32] = { 0 }, pgtype[32] = { 0 }, pgsub[32] = { 0 };
     int track = 0, n = 0, pregap = 0, postgap = 0, got;
     /* libchdr's CDROM_TRACK_METADATA(2)_FORMAT, but with widths: the text comes from the file and the buffers
      * are 32 bytes (the macros' bare %s would overflow them; tools/test_chd_disc.c checks this) */

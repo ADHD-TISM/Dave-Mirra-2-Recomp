@@ -1,6 +1,8 @@
 /* Tests runtime/chd_disc.c's CD track parser with good and hostile metadata text. Exit 0 = all passed.
  *   clang -fsanitize=address -g tools/test_chd_disc.c runtime/chd_disc.c third_party/libchdr_all.c -o test_chd_disc.exe
- * (AddressSanitizer turns a buffer overflow into a failure.) */
+ * The checks themselves are the guard: each long field is given alone, and the result a bounded (%31s) parse
+ * gives is asserted exactly, so an unbounded field that runs over the other locals changes it. AddressSanitizer
+ * on mingw does not see sscanf's writes (they happen inside ucrtbase.dll); it only adds a check on later reads. */
 #include <stdio.h>
 #include <string.h>
 #include "../runtime/chd_disc.h"
@@ -9,7 +11,7 @@ static int failed;
 static void check(int ok, const char *what) { printf("%s %s\n", ok ? "ok  " : "FAIL", what); if (!ok) failed++; }
 
 int main(void) {
-    char err[200], meta[256], big[201];
+    char err[200], meta[256], big[151];
     uint32_t frames = 0, lead = 0;
     int off = 0;
     check(chd_disc_parse_track1("TRACK:1 TYPE:MODE2_RAW SUBTYPE:NONE FRAMES:306432 PREGAP:0 PGTYPE:MODE1 PGSUB:RW POSTGAP:0",
@@ -27,15 +29,24 @@ int main(void) {
           && strstr(err, "not a data track"), "audio first track refused");
     check(chd_disc_parse_track1("TRACK:1 TYPE:MODE1 SUBTYPE:NONE FRAMES:10 PREGAP:10 PGTYPE:VMODE1 PGSUB:RW POSTGAP:0",
                                 1, err, sizeof err, &frames, &lead, &off) < 0, "pregap as long as the track refused");
-    memset(big, 'A', 200);
-    big[200] = 0;
-    snprintf(meta, sizeof meta, "TRACK:1 TYPE:%s SUBTYPE:NONE FRAMES:10 PREGAP:0 PGTYPE:MODE1 PGSUB:RW POSTGAP:0", big);
-    check(chd_disc_parse_track1(meta, 1, err, sizeof err, &frames, &lead, &off) < 0, "200-character TYPE refused, no overflow");
-    snprintf(meta, sizeof meta, "TRACK:1 TYPE:MODE1 SUBTYPE:NONE FRAMES:10 PREGAP:0 PGTYPE:%s PGSUB:%s POSTGAP:0", big, big);
-    chd_disc_parse_track1(meta, 1, err, sizeof err, &frames, &lead, &off);
-    check(1, "200-character PGTYPE/PGSUB, no overflow");
-    snprintf(meta, sizeof meta, "TRACK:1 TYPE:MODE1 SUBTYPE:%s FRAMES:10", big);
-    check(chd_disc_parse_track1(meta, 0, err, sizeof err, &frames, &lead, &off) < 0, "200-character SUBTYPE (v1) refused");
+    memset(big, 'A', 150);       /* 150: the longest field that still fits meta[256] with the rest of a line */
+    big[150] = 0;
+    static const struct { int v2; const char *fmt; int ok; const char *what; } longs[] = {
+        { 1, "TRACK:1 TYPE:%s SUBTYPE:NONE FRAMES:10 PREGAP:0 PGTYPE:MODE1 PGSUB:RW POSTGAP:0", 0, "long TYPE refused" },
+        { 1, "TRACK:1 TYPE:MODE1 SUBTYPE:%s FRAMES:10 PREGAP:0 PGTYPE:MODE1 PGSUB:RW POSTGAP:0", 0, "long SUBTYPE refused" },
+        { 1, "TRACK:1 TYPE:MODE1 SUBTYPE:NONE FRAMES:10 PREGAP:0 PGTYPE:%s PGSUB:RW POSTGAP:0", 1, "long PGTYPE cut, track kept" },
+        { 1, "TRACK:1 TYPE:MODE1 SUBTYPE:NONE FRAMES:10 PREGAP:0 PGTYPE:MODE1 PGSUB:%s POSTGAP:0", 1, "long PGSUB cut, track kept" },
+        { 0, "TRACK:1 TYPE:%s SUBTYPE:NONE FRAMES:10", 0, "long TYPE (v1) refused" },
+        { 0, "TRACK:1 TYPE:MODE1 SUBTYPE:%s FRAMES:10", 0, "long SUBTYPE (v1) refused" },
+    };
+    for (unsigned i = 0; i < sizeof longs / sizeof longs[0]; i++) {
+        frames = 99; lead = 99; off = 99; err[0] = 0;
+        snprintf(meta, sizeof meta, longs[i].fmt, big);
+        int r = chd_disc_parse_track1(meta, longs[i].v2, err, sizeof err, &frames, &lead, &off);
+        check(longs[i].ok ? r == 1 && frames == 10 && lead == 0 && off == 0
+                          : r < 0 && strstr(err, "unreadable CD track information") && frames == 99 && lead == 99,
+              longs[i].what);
+    }
     printf("%s\n", failed ? "FAILED" : "all passed");
     return failed != 0;
 }
