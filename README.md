@@ -2,7 +2,7 @@
 
 <a href="https://recomplauncher.com"><picture><source media="(prefers-color-scheme: dark)" srcset="https://recomplauncher.com/assets/press/launcher/badge-light.svg"><img alt="Get it on RecompLauncher" src="https://recomplauncher.com/assets/press/launcher/badge-dark.svg" height="48"></picture></a>
 
-> **Early work in progress.** Expect bugs, crashes and missing effects.
+> Mainly Complete.
 
 A native Windows and Linux build of **Dave Mirra Freestyle BMX 2** (PlayStation 2, USA,
 SLUS-20159). The game's own program is translated to C and compiled for the PC.
