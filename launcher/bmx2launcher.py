@@ -440,7 +440,8 @@ def linux_missing(P):
         except OSError:
             bad = True
         if not bad:     # the headers can be there without the libraries to link (libGL.so, libEGL.so)
-            exe = os.path.join(tempfile.gettempdir(), "bmx2-linktest-%d" % os.getpid())
+            tmpdir = tempfile.mkdtemp(prefix="bmx2-linktest-")
+            exe = os.path.join(tmpdir, "t")
             try:
                 r = subprocess.run([cc, "-x", "c", "-", "-o", exe] + cflags + (sdl2_flags("libs") or ["-lSDL2"])
                                    + ["-lGL", "-lEGL"], input=src + "int main(void) { return 0; }\n",
@@ -449,10 +450,7 @@ def linux_missing(P):
             except OSError:
                 bad = True
             finally:
-                try:
-                    os.remove(exe)
-                except OSError:
-                    pass
+                shutil.rmtree(tmpdir, ignore_errors=True)
         if bad:
             miss.append("the OpenGL and EGL development files")
     _linux_missing[cc] = miss

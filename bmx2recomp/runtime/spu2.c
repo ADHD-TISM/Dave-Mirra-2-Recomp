@@ -319,7 +319,7 @@ void spu2_update(void) {
         if (r > 32767) r = 32767; if (r < -32768) r = -32768;
         u32 fr = (u16)l | ((u32)(u16)r << 16);
         u32 w = wr;
-        if (w - rd < RING) { ring[w & (RING - 1)] = fr; __atomic_store_n(&wr, w + 1, __ATOMIC_RELEASE); }   /* the frame before the count */
+        if (w - __atomic_load_n(&rd, __ATOMIC_ACQUIRE) < RING) { ring[w & (RING - 1)] = fr; __atomic_store_n(&wr, w + 1, __ATOMIC_RELEASE); }   /* the frame before the count */
         if (wav) { fwrite(&fr, 4, 1, wav); wav_frames++; }
         mixed++; n_spu_frames++;
     }
@@ -422,7 +422,7 @@ static void audio_pull(void *u, Uint8 *out, int len) {
         if (drop && i && (i & 255) == 0 && src + 1 < avail) { src++; n_spu_dropped++; }
         o[i] = ring[(r0 + src) & (RING - 1)];
     }
-    rd = r0 + src;
+    __atomic_store_n(&rd, r0 + src, __ATOMIC_RELEASE);   /* the slots are read before the mixer may reuse them */
     if (n < want) {                                     /* ran dry: silence, then wait for 2 buffers again */
         memset(o + n, 0, (size_t)(want - n) * 4);
         primed = 0;
