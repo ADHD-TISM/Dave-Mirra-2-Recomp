@@ -240,6 +240,7 @@ void ee_event(void) {
         gs_vsync();
         { void menu_vsync(void); menu_vsync(); }   /* Esc / Back+Start: the game pauses in the menu here */
         { void pad_vsync(void); pad_vsync(); }
+        { void ach_vsync(void); ach_vsync(); }   /* Recomp Achievements: memory checks (achievements.c) */
         if (!(gs_imr & 0x800)) intc_raise(0);
         intc_raise(2);
     }

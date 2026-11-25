@@ -31,6 +31,7 @@ enum { OK = 0, CHANGED = -1, NOFORMAT = -2, FULL = -3, NOENTRY = -4, DENIED = -5
 
 int g_log_mc;
 static FILE *fds[32];
+static u8 fd_is_save[32];   /* the fd is BMX2SAVE.DAT: reading it tells achievements.c */
 static char cwd[2][1024] = { "/", "/" };
 static int seen[2];
 
@@ -179,6 +180,7 @@ static int mc_open(int port, const char *path, u32 mode) {
     FILE *f = fopen(hp, m);
     if (!f) return exists ? DENIED : NOENTRY;
     fds[k] = f;
+    fd_is_save[k] = strstr(path, "BMX2SAVE.DAT") != NULL;
     return k;
 }
 
@@ -218,7 +220,9 @@ void mc_rpc(u32 fn, u8 *b) {
         if (k >= 32 || !fds[k]) { r = -4; break; }
         u8 *tmp = malloc(n ? n : 1); size_t got = fread(tmp, 1, n, fds[k]);
         for (size_t i = 0; i < got; i++) mw8(dst + (u32)i, tmp[i]);
-        free(tmp); r = (int)got; break; }
+        free(tmp); r = (int)got;
+        if (got && fd_is_save[k]) { void ach_save_read(void); ach_save_read(); }
+        break; }
     case 6: { u32 k = rd(b, 0), head = rd(b, 20), body = rd(b, 12), src = rd(b, 24);   /* Write */
         if (k >= 32 || !fds[k]) { r = -4; break; }
         if (head > 16) head = 16;

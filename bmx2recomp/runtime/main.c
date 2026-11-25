@@ -208,6 +208,14 @@ int ee_hook(u32 a) {
 static void on_exit_report(void) { trace_dump(); fflush(stdout); fflush(stderr); }
 
 void check_frame_limit(void) {
+    {   /* EE_DUMP_EVERY=N EE_DUMP_DIR=<dir>: EE RAM to <dir>/ee_<frame>.bin every N frames (finding game state) */
+        static int every = -1; static const char *dir;
+        if (every < 0) { const char *e = getenv("EE_DUMP_EVERY"); dir = getenv("EE_DUMP_DIR"); every = e && dir ? atoi(e) : 0; }
+        if (every > 0 && g_frame % every == 0) {
+            char p[1024]; snprintf(p, sizeof p, "%s/ee_%06llu.bin", dir, (unsigned long long)g_frame);
+            FILE *f = fopen(p, "wb"); if (f) { fwrite(ee_ram, 1, 32 << 20, f); fclose(f); }
+        }
+    }
     if (max_frames && g_frame >= max_frames) {
         extern void kernel_dump(void);
         LOG("frame limit reached\n"); kernel_dump(); ipu_stats();
@@ -268,6 +276,7 @@ int main(int argc, char **argv) {
     gst_init();
     spu2_init();
     load_elf(elf_name);
+    { void ach_init(void); ach_init(); }   /* Recomp Achievements (achievements.c) */
     sif_init();
     kernel_init();
     ee.fcr31 = 0x01000001;

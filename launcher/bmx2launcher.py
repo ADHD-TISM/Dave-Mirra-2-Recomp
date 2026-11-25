@@ -307,12 +307,15 @@ def file_bytes(path):
 
 
 def source_bytes(path):
-    """A source file's bytes, plus the libchdr files it includes: all of the tree for third_party/libchdr_all.c,
-    the headers for runtime/chd_disc.c (so a new libchdr also rebuilds the code that reads its header struct)."""
+    """A source file's bytes, plus the third-party files it includes: all of the tree for
+    third_party/libchdr_all.c and third_party/rl_achievements_all.c, the headers for runtime/chd_disc.c (so a
+    new libchdr also rebuilds the code that reads its header struct) and runtime/achievements.c."""
     data = file_bytes(path)
     name, here = os.path.basename(path), os.path.dirname(path)
     top = (os.path.join(here, "libchdr") if name == "libchdr_all.c" else
-           os.path.join(here, "..", "third_party", "libchdr", "include") if name == "chd_disc.c" else None)
+           os.path.join(here, "rl_achievements") if name == "rl_achievements_all.c" else
+           os.path.join(here, "..", "third_party", "libchdr", "include") if name == "chd_disc.c" else
+           os.path.join(here, "..", "third_party", "rl_achievements", "include") if name == "achievements.c" else None)
     if top and os.path.isdir(top):
         for dirpath, dirs, files in os.walk(top):
             dirs.sort()
@@ -864,6 +867,9 @@ def _sources(P):
     chdr = os.path.join(P.project, "third_party", "libchdr_all.c")     # CHD images (v0.2.1 on)
     if os.path.isfile(chdr):
         src.append(chdr)
+    rla = os.path.join(P.project, "third_party", "rl_achievements_all.c")   # Recomp Achievements
+    if os.path.isfile(rla):
+        src.append(rla)
     hdr = []
     for d in (rt, P.gen, P.gen_vu):
         hdr += [os.path.join(d, n) for n in sorted(os.listdir(d)) if n.endswith(".h")]
@@ -877,6 +883,11 @@ def _flags(P, src):
         f += ["-Wall", "-Wno-unused-but-set-variable", "-Wno-unused-function"]
     else:
         f += ["-w"]
+    if os.path.basename(src) == "rl_achievements_all.c":    # the include paths build.sh gives it
+        rla = os.path.join(P.project, "third_party", "rl_achievements")
+        f += ["-DRC_DISABLE_LUA", "-I", os.path.join(rla, "include"),
+              "-I", os.path.join(rla, "third_party", "rcheevos", "include"),
+              "-I", os.path.join(rla, "third_party", "rcheevos", "src"), "-I", os.path.join(rla, "third_party", "cjson")]
     return f
 
 

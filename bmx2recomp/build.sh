@@ -23,6 +23,12 @@ ls gen/*.c gen_iop/*.c runtime/*.c | xargs -P 16 -I{} sh -c '
 if [ ! -f build/obj/libchdr_all.o ] || [ -n "$(find third_party -newer build/obj/libchdr_all.o -name '*.[ch]' | head -1)" ]; then
   $CC $OPT -w -c third_party/libchdr_all.c -o build/obj/libchdr_all.o
 fi
+# Recomp Achievements (runtime/achievements.c): third-party code, built once without warnings
+RLA=third_party/rl_achievements
+if [ ! -f build/obj/rl_achievements_all.o ] || [ -n "$(find $RLA third_party/rl_achievements_all.c -newer build/obj/rl_achievements_all.o -name '*.[ch]' | head -1)" ]; then
+  $CC $OPT -w -DRC_DISABLE_LUA -I$RLA/include -I$RLA/third_party/rcheevos/include -I$RLA/third_party/rcheevos/src -I$RLA/third_party/cjson \
+    -c third_party/rl_achievements_all.c -o build/obj/rl_achievements_all.o
+fi
 # icon (from the disc's memory card icon) and name: runtime/bmx2.rc
 if [ -f ../disc/ASSETS/ICON.DAT ] && { [ ! -f gen/bmx2.ico ] || [ tools/make_icon.py -nt gen/bmx2.ico ]; }; then
   python -I tools/make_icon.py ../disc/ASSETS/ICON.DAT gen/bmx2.ico
