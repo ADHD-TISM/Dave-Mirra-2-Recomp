@@ -416,7 +416,7 @@ def compiler_id(P):
             return "own missing"
     if not WIN:
         try:
-            r = subprocess.run([P.clang, "--version"], capture_output=True, text=True)
+            r = subprocess.run([P.clang, "--version"], capture_output=True, text=True, errors="replace")
             return (r.stdout.splitlines() or [""])[0]
         except OSError:
             return P.clang

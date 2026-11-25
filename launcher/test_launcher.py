@@ -747,6 +747,12 @@ def test_recomp_achievements_is_built_and_keyed(d):
         fh.write("int y;\n")
     check(bl.source_bytes(ach) != a1 and bl.source_bytes(unity) != u1, "a new header does not rebuild its users")
     check(bl.build_key(P) != k1, "a new header does not change build_key")
+    k2, real_flags = bl.build_key(P), bl._flags
+    bl._flags = lambda P_, p: real_flags(P_, p) + (["-DNEW_LIB_OPTION"] if p.endswith("rl_achievements_all.c") else [])
+    try:
+        check(bl.build_key(P) != k2, "new compile flags for the achievements library do not change build_key")
+    finally:
+        bl._flags = real_flags
 
 
 @windows_flow

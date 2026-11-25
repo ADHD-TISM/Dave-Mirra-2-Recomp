@@ -121,9 +121,15 @@ are older snapshots, kept for history.
   and on Linux (WSL); every test that uses the pinned llvm-mingw carries
   @windows_flow, and a linux_flow test checks that a new compiler version
   line changes build_key and the object keys (BMX2_CLANG is Windows-only).
-- Not done / not tested: Recomp Achievements on Linux (built and linked;
-  the AF_UNIX RL_SESSION channel never run; tools/fake_rl.py is
-  Windows-only), a gamepad on Linux (no pad in WSL), a real Linux
+- Recomp Achievements on Linux: built and linked (libc + pthread only);
+  the peer review ran the merged Linux build headless from the CD CHD with
+  a stand-in launcher on a Unix socket (AF_UNIX RL_SESSION): hello,
+  casual and an event (level_unlocked after an EE_POKE) arrived. The
+  socket must be on a Linux filesystem (binding under /mnt/c fails with
+  EOPNOTSUPP); tools/fake_rl.py is still Windows-only (named pipe).
+  build.sh keeps Linux objects in build/obj-linux, so a Windows checkout
+  can be built from WSL; .gitattributes keeps *.sh at LF.
+- Not done / not tested: RecompLauncher's achievements on Linux, a gamepad on Linux (no pad in WSL), a real Linux
   desktop or Steam Deck, RecompLauncher on Linux, a PyInstaller Linux build
   (the tarball runs the .py with the system python3), an AppImage (the
   guide wants tarball + AppImage; the tarball needs the system's dev
