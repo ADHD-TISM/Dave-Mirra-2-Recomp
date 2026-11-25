@@ -47,7 +47,7 @@ from concurrent.futures import ThreadPoolExecutor
 # The project's online home (GitHub "owner/name"). Empty while it is not published:
 # the launcher then uses the bmx2recomp folder next to it and Update says so.
 REPO = "ADHD-TISM/Dave-Mirra-2-Recomp"
-LAUNCHER_VERSION = "9"
+LAUNCHER_VERSION = "10"
 
 GAME_NAME = "Dave Mirra Freestyle BMX 2"
 GAME_SERIAL = "SLUS-20159"
@@ -920,6 +920,8 @@ def build_key(P):
     h = hashlib.sha256(b"build1")
     flags = [a for d in (os.path.join(P.project, "runtime"), P.gen) for a in _flags(P, os.path.join(d, "x.c"))
              if not os.path.isabs(a)]
+    flags += [a for a in _flags(P, os.path.join(P.project, "third_party", "rl_achievements_all.c"))   # its -D/-I too
+              if not os.path.isabs(a)]
     h.update(repr((LINK, LLVM_NAME, flags, RES_ARGS)).encode())   # the compile, icon and link recipe, the compiler
     for p in hdr + src + _resources(P):
         h.update(os.path.basename(p).encode())

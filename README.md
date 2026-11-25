@@ -154,7 +154,10 @@ The `.gitignore` only lets source files in.
 
 The code in this repository is under the [MIT License](LICENSE), except
 `bmx2recomp/third_party/libchdr` (CHD reading: BSD 3-clause, with its own
-licence files or licence headers for LZMA, miniz, Zstandard and dr_flac).
+licence files or licence headers for LZMA, miniz, Zstandard and dr_flac) and
+`bmx2recomp/third_party/rl_achievements` (Recomp Achievements: the Recomp
+Achievements License 1.0 in its LICENSE file, free for games, launchers need
+its author's written permission; it includes rcheevos and cJSON, MIT).
 None of these licences grant rights to Dave Mirra Freestyle BMX 2 or its data,
 which belong to their owners.
 This project is not affiliated with or endorsed by them.

@@ -210,11 +210,24 @@ static void on_exit_report(void) { trace_dump(); fflush(stdout); fflush(stderr);
 void check_frame_limit(void) {
     {   /* EE_DUMP_EVERY=N EE_DUMP_DIR=<dir>: EE RAM to <dir>/ee_<frame>.bin every N frames (finding game state) */
         static int every = -1; static const char *dir;
-        if (every < 0) { const char *e = getenv("EE_DUMP_EVERY"); dir = getenv("EE_DUMP_DIR"); every = e && dir ? atoi(e) : 0; }
+        if (every < 0) { const char *e = getenv("EE_DUMP_EVERY"); dir = getenv("EE_DUMP_DIR"); every = e && dir ? atoi(e) : 0; if (every < 0) every = 0; }
         if (every > 0 && g_frame % every == 0) {
             char p[1024]; snprintf(p, sizeof p, "%s/ee_%06llu.bin", dir, (unsigned long long)g_frame);
             FILE *f = fopen(p, "wb"); if (f) { fwrite(ee_ram, 1, 32 << 20, f); fclose(f); }
         }
+    }
+    {   /* EE_POKE=frame:hexaddr:hexbyte,... writes bytes into EE RAM at those frames (testing achievements.c) */
+        static int n = -1; static struct { u64 frame; u32 addr; u8 val; } pk[64];
+        if (n < 0) {
+            const char *e = getenv("EE_POKE"); n = 0;
+            while (e && *e && n < 64) {
+                char *c; pk[n].frame = strtoull(e, &c, 10); if (*c != ':') break;
+                pk[n].addr = (u32)strtoul(c + 1, &c, 16) & 0x1ffffff; if (*c != ':') break;
+                pk[n].val = (u8)strtoul(c + 1, &c, 16); n++;
+                e = *c == ',' ? c + 1 : c;
+            }
+        }
+        for (int i = 0; i < n; i++) if (pk[i].frame == g_frame) { ee_ram[pk[i].addr] = pk[i].val; LOG("poke: frame %llu %08x = %02x\n", (unsigned long long)g_frame, pk[i].addr, pk[i].val); }
     }
     if (max_frames && g_frame >= max_frames) {
         extern void kernel_dump(void);

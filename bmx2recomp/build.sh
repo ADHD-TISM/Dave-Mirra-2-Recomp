@@ -16,11 +16,11 @@ export -f compile 2>/dev/null || true
 export CC CFLAGS
 ls gen/*.c gen_iop/*.c runtime/*.c | xargs -P 16 -I{} sh -c '
   src={}; obj=build/obj/$(echo "$src" | tr "/" "_" | sed "s/\.c$/.o/")
-  if [ ! -f "$obj" ] || [ "$src" -nt "$obj" ] || [ runtime/ee.h -nt "$obj" ] || [ runtime/rt.h -nt "$obj" ] || [ runtime/iop.h -nt "$obj" ] || { case "$src" in runtime/*) [ runtime/config.h -nt "$obj" ] || [ runtime/gs.h -nt "$obj" ] || [ runtime/chd_disc.h -nt "$obj" ] || { [ "$src" = runtime/chd_disc.c ] && [ -n "$(find third_party/libchdr/include -newer "$obj" -name "*.h" | head -1)" ]; };; *) false;; esac; } || { [ "$src" = runtime/vu.c ] && [ -f gen_vu/vu1_rec.h ] && [ gen_vu/vu1_rec.h -nt "$obj" ]; }; then
+  if [ ! -f "$obj" ] || [ "$src" -nt "$obj" ] || [ runtime/ee.h -nt "$obj" ] || [ runtime/rt.h -nt "$obj" ] || [ runtime/iop.h -nt "$obj" ] || { case "$src" in runtime/*) [ runtime/config.h -nt "$obj" ] || [ runtime/gs.h -nt "$obj" ] || [ runtime/chd_disc.h -nt "$obj" ] || { [ "$src" = runtime/chd_disc.c ] && [ -n "$(find third_party/libchdr/include -newer "$obj" -name "*.h" | head -1)" ]; } || { [ "$src" = runtime/achievements.c ] && [ -n "$(find third_party/rl_achievements/include -newer "$obj" -name "*.h" | head -1)" ]; };; *) false;; esac; } || { [ "$src" = runtime/vu.c ] && [ -f gen_vu/vu1_rec.h ] && [ gen_vu/vu1_rec.h -nt "$obj" ]; }; then
     $CC $CFLAGS -c "$src" -o "$obj" || exit 255
   fi'
 # libchdr (CHD images, runtime/chd_disc.c): third-party code, built once without warnings
-if [ ! -f build/obj/libchdr_all.o ] || [ -n "$(find third_party -newer build/obj/libchdr_all.o -name '*.[ch]' | head -1)" ]; then
+if [ ! -f build/obj/libchdr_all.o ] || [ -n "$(find third_party/libchdr third_party/libchdr_all.c -newer build/obj/libchdr_all.o -name '*.[ch]' | head -1)" ]; then
   $CC $OPT -w -c third_party/libchdr_all.c -o build/obj/libchdr_all.o
 fi
 # Recomp Achievements (runtime/achievements.c): third-party code, built once without warnings

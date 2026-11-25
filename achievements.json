@@ -1,0 +1,22 @@
+{
+  "format": 1,
+  "game": "dave-mirra-freestyle-bmx-2",
+  "source": "events",
+  "console": "ps2",
+  "copies": ["SLUS-20159"],
+  "versions": ">=0.2.2",
+  "achievements": [
+    {"id": 1, "title": "Fresh Tracks", "description": "Land your first trick", "points": 5, "event": "first_trick"},
+    {"id": 2, "title": "Prove Yourself", "description": "Finish a level's Rookie objective in ProQuest", "points": 5, "type": "progression", "event": "rookie_objective"},
+    {"id": 3, "title": "Amateur Hour", "description": "Finish every Amateur objective in a level", "points": 10, "type": "progression", "event": "amateur_objectives"},
+    {"id": 4, "title": "Going Pro", "description": "Finish every Pro objective in a level", "points": 10, "event": "pro_objectives"},
+    {"id": 5, "title": "Hardcore", "description": "Finish every Hardcore objective in a level", "points": 25, "event": "hardcore_objectives"},
+    {"id": 6, "title": "New Ground", "description": "Unlock a new level in ProQuest", "points": 10, "type": "progression", "event": "level_unlocked"},
+    {"id": 7, "title": "Gap Hunter", "description": "Find your first gap", "points": 5, "event": "first_gap"},
+    {"id": 8, "title": "On the Podium", "description": "Win a medal in a competition", "points": 10, "event": "medal"},
+    {"id": 9, "title": "Gold Standard", "description": "Win a gold medal in a competition", "points": 25, "event": "gold_medal"},
+    {"id": 10, "title": "Respected", "description": "Earn all 5,000 respect in a level", "points": 25, "event": "max_respect"},
+    {"id": 11, "title": "Big Run", "description": "Score 25,000 points in a single run", "points": 10, "bonus": true, "event": "big_run"},
+    {"id": 12, "title": "ProQuest Master", "description": "Finish every objective in all 8 levels with one rider", "points": 50, "type": "win", "event": "proquest_master"}
+  ]
+}
