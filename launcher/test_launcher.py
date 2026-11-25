@@ -219,6 +219,36 @@ def test_image_reads_subfolders(d):
         im.close()
 
 
+def test_image_reads_a_chd_through_chdread(d):
+    iso = os.path.join(d, "game.iso")
+    _make_iso(iso)
+    with open(iso, "rb") as f:
+        data = f.read()
+    p = os.path.join(d, "game.chd")
+    with open(p, "wb") as f:
+        f.write(bl.CHD_MAGIC + b"\0" * 2040)      # only the magic matters: chdread is stubbed below
+    calls = []
+
+    def fake_chdread(self, *args):
+        calls.append(args)
+        if args[0] == "info":
+            return b"sectors 32\n"
+        lba, n = int(args[2]), int(args[3])
+        return data[lba * 2048:(lba + n) * 2048]
+    old = bl.Image._chdread
+    bl.Image._chdread = fake_chdread
+    try:
+        im = bl.Image(p)
+        check(im.read("SLUS_201.59") == b"slus!" and im.read("ASSETS/ICON.DAT") == b"icon!!", "files from a CHD")
+        check(im.sector(40) == b"\0" * 2048, "past the end is zeros")
+        reads = [a for a in calls if a[0] == "read"]
+        check(reads == [("read", p, "0", "32")], "one chunked read for a small disc: %r" % reads)
+        im.close()
+    finally:
+        bl.Image._chdread = old
+    check(bl.is_chd(p) and not bl.is_chd(iso), "is_chd")
+
+
 class _Stubs:
     """Replace launcher functions for one test; put them back after."""
     def __init__(self, **fns):

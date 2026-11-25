@@ -30,7 +30,8 @@ effects (reverb) may sound drier than on a PS2.
 - A GPU with OpenGL 3.3.
 - About 1 GB of free disk space.
 - Your own disc image of **Dave Mirra Freestyle BMX 2, USA (SLUS-20159),
-  version 1.00**: a `.bin` + `.cue` or an `.iso`. Other regions do not work.
+  version 1.00**: a `.bin` + `.cue`, an `.iso`, or a `.chd` (made with
+  chdman `createcd` or `createdvd`). Other regions do not work.
 
 You do not need to install a compiler or Python. The setup step downloads its
 own build tools (about 200 MB) into the game's folder and writes nothing
@@ -41,10 +42,10 @@ outside it.
 1. Install [RecompLauncher](https://recomplauncher.com).
 2. Find Dave Mirra Freestyle BMX 2 in its catalog and install it. It is not
    listed yet. Until it is, unpack a release zip (below) and add that folder in
-   RecompLauncher with **Settings > Developers > Developer tools > Add a
-   build**, or use the command line below.
-3. On the setup screen, pick your disc image (`.cue` with its `.bin`, or
-   `.iso`), and tick **Download the build tools and the project's source**.
+   RecompLauncher with **Settings > Bring Your Games > Pick a Folder**, or use
+   the command line below.
+3. On the setup screen, pick your disc image (`.cue` with its `.bin`, `.iso`
+   or `.chd`), and tick **Download the build tools and the project's source**.
 4. The setup step translates the game's code from your disc and builds it. The
    first build takes about a minute.
 5. Press **Play**.
@@ -57,8 +58,8 @@ from the [Releases](https://github.com/ADHD-TISM/Dave-Mirra-2-Recomp/releases)
 page and unpack it. Then, in that folder, build once and play:
 
 ```
-"Dave Mirra Freestyle BMX 2.exe" --disc=<your .cue or .iso> prepare --accept-downloads
-"Dave Mirra Freestyle BMX 2.exe" --disc=<your .cue or .iso> run
+"Dave Mirra Freestyle BMX 2.exe" --disc=<your .cue, .iso or .chd> prepare --accept-downloads
+"Dave Mirra Freestyle BMX 2.exe" --disc=<your .cue, .iso or .chd> run
 ```
 
 After `prepare`, a double click on `Dave Mirra Freestyle BMX 2.exe` starts
@@ -151,6 +152,8 @@ The `.gitignore` only lets source files in.
 
 ## License
 
-The code in this repository is under the [MIT License](LICENSE). It grants no
+The code in this repository is under the [MIT License](LICENSE), except
+`bmx2recomp/third_party/libchdr` (CHD reading: BSD 3-clause, with its own
+licence files for LZMA, miniz, Zstandard and dr_flac). It grants no
 rights to Dave Mirra Freestyle BMX 2 or its data, which belong to their owners.
 This project is not affiliated with or endorsed by them.

@@ -4,6 +4,7 @@
  * hands control back when every thread is blocked. */
 #include "rt.h"
 #include "iop.h"
+#include "chd_disc.h"
 #include <windows.h>
 #include <stdlib.h>
 #include <stdarg.h>
@@ -214,8 +215,24 @@ static int cd_read(u32 lsn, u32 count, u32 dst) {
         disc_image = fopen(g_disc_image, "rb");
         if (!disc_image) { LOG("iop: cannot open disc image %s\n", g_disc_image); exit(1); }
     }
-    /* raw .bin (2352-byte MODE2 sectors, data at 24) or a plain .iso (2048-byte sectors) */
-    static int iso = -1;
+    /* a .chd (chd_disc.c), raw .bin (2352-byte MODE2 sectors, data at 24) or a plain .iso (2048-byte sectors) */
+    static int iso = -1, chd = -1;
+    if (chd < 0) {
+        chd = chd_disc_is_chd(disc_image);
+        char err[160];
+        if (chd && chd_disc_open(disc_image, err, sizeof err)) { LOG("iop: cannot read disc image %s: %s\n", g_disc_image, err); exit(1); }
+    }
+    if (chd) {
+        for (u32 k = 0; k < count; k++) {
+            u8 s[2048];
+            if (chd_disc_read(lsn + k, s)) LOG("iop: CHD read error at sector %u\n", lsn + k);
+            u32 d = dst + k * 2048;
+            if (iop_is_ram(d) && iop_is_ram(d + 2047) && (d & 0x1fffff) + 2048 <= sizeof iop_ram)
+                memcpy(iop_ram + (d & 0x1fffff), s, 2048);
+            else for (u32 o = 0; o < 2048; o++) iw8(d + o, s[o]);
+        }
+        return 1;
+    }
     if (iso < 0) {
         _fseeki64(disc_image, 0, SEEK_END);
         long long n = _ftelli64(disc_image);

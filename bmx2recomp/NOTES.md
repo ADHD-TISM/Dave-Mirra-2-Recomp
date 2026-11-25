@@ -74,8 +74,18 @@ are older snapshots, kept for history.
   a dialog; after a double click a message box says what failed);
   exit_codes 3, 4, 5 and 6; build_key also hashes the compile flags and the
   windres arguments.
-- Not done (Recomp Standards): CHD input (PS2 DVD CHDs use lzma/zlib/huff/
-  flac hunks, medium), a Linux build, Recomp Achievements, dumps values,
+- Since v0.2.0: CHD images. libchdr (BSD, third_party/libchdr, built as
+  third_party/libchdr_all.c, which adds the avhuff codec upstream's unity.c
+  leaves out) + runtime/chd_disc.c: track 1 of a CD CHD (MODE2_RAW: data at
+  24, or by byte 15; MODE1/MODE2_FORM1 at 0; MODE2 at 8) or a DVD CHD (2048).
+  iop.c cd_read picks it by the "MComprHD" magic. The launcher cannot decode
+  CHD in Python, so Image runs tools/chdread.c (chdread.exe, built by
+  build_exe.sh and packed into the program; 256-sector chunks). Checked with
+  chdman 0.289 (MAME, used locally only): createcd (cdlz/cdzl/cdfl) and
+  createdvd (lzma/zlib/huff/flac) of the USA disc both decode to the exact
+  .iso bytes, prepare from the CD CHD and 1140 frames from either play with
+  no frame over 17 ms. Not checked: RecompLauncher's iso9660 check on a .chd.
+- Not done (Recomp Standards): a Linux build, Recomp Achievements, dumps values,
   a new pinned compiler is never installed over an old one (toolchain_ok
   only checks the file exists; older than this change).
 - Since v0.2.0: bmx2.exe carries a manifest (runtime/bmx2.manifest, in

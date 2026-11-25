@@ -4,7 +4,7 @@ from your own disc and starts it. RecompLauncher (recomplauncher.json) runs
 it; it has no window of its own.
 
 You need your own copy of the game (SLUS-20159, USA, version 1.00) as a
-.bin/.cue or an .iso. The build tools (a C compiler and Python for the code
+.bin/.cue, an .iso or a .chd. The build tools (a C compiler and Python for the code
 generators) are downloaded into tools/, only with --accept-downloads, and
 nothing is written outside the root folder.
 
@@ -297,6 +297,19 @@ def file_bytes(path):
         return f.read()
 
 
+def source_bytes(path):
+    """A source file's bytes; for third_party/libchdr_all.c, which only includes the libchdr tree, all of that tree."""
+    data = file_bytes(path)
+    if os.path.basename(path) == "libchdr_all.c":
+        top = os.path.join(os.path.dirname(path), "libchdr")
+        for dirpath, dirs, files in os.walk(top):
+            dirs.sort()
+            for n in sorted(files):
+                p = os.path.join(dirpath, n)
+                data += os.path.relpath(p, top).replace(os.sep, "/").encode() + b"\0" + file_bytes(p)
+    return data
+
+
 # ---------------------------------------------------------------- download/update
 
 def version_tuple(tag):
@@ -489,10 +502,41 @@ def image_present(path):
         return False
 
 
+CHD_MAGIC = b"MComprHD"
+CHD_CHUNK = 256          # sectors per chdread call
+
+
+def chd_tool():
+    """chdread.exe (bmx2recomp/tools/chdread.c): packed into the program by build_exe.sh, or next to this file."""
+    here = getattr(sys, "_MEIPASS", None) if FROZEN else os.path.dirname(os.path.abspath(__file__))
+    p = os.path.join(here or "", "chdread.exe")
+    if not os.path.isfile(p):
+        raise Fail("CHD images need chdread.exe next to the launcher (launcher/build_exe.sh builds it)")
+    return p
+
+
+def is_chd(path):
+    try:
+        with open(path, "rb") as f:
+            return f.read(8) == CHD_MAGIC
+    except OSError:
+        return False
+
+
 class Image:
-    """Reads files by path (subfolders included) from a raw 2352-byte-sector .bin or a 2048-byte-sector .iso."""
+    """Reads files by path (subfolders included) from a raw 2352-byte-sector .bin, a 2048-byte-sector .iso,
+    or a .chd (through chdread.exe, since Python cannot decode CHD hunks)."""
     def __init__(self, path):
         self.path = resolve_image(path)
+        self.chd = is_chd(self.path)
+        self.f = None
+        if self.chd:
+            out = self._chdread("info", self.path).decode("ascii", "replace")
+            m = re.match(r"sectors (\d+)", out)
+            if not m:
+                raise Fail("%s: unexpected answer from chdread: %s" % (os.path.basename(self.path), out.strip()))
+            self.nsect, self.cache = int(m.group(1)), {}
+            return
         n = os.path.getsize(self.path)
         if n % 2352 == 0:
             self.ss = 2352
@@ -502,10 +546,31 @@ class Image:
             raise Fail("%s is not a disc image (its size fits neither .bin nor .iso sectors)" % os.path.basename(self.path))
         self.f = open(self.path, "rb")
 
+    def _chdread(self, *args):
+        r = subprocess.run([chd_tool()] + list(args), capture_output=True, creationflags=NO_WINDOW)
+        if r.returncode:
+            raise Fail("%s: %s" % (os.path.basename(self.path),
+                                   r.stderr.decode("utf-8", "replace").strip() or "chdread failed (%d)" % r.returncode))
+        return r.stdout
+
     def close(self):
-        self.f.close()
+        if self.f:
+            self.f.close()
 
     def sector(self, lba):
+        if self.chd:
+            if lba >= self.nsect:
+                return b"\0" * 2048
+            base = lba - lba % CHD_CHUNK
+            if base not in self.cache:
+                n = min(CHD_CHUNK, self.nsect - base)
+                data = self._chdread("read", self.path, str(base), str(n))
+                if len(data) != n * 2048:
+                    raise Fail("%s: short read from chdread" % os.path.basename(self.path))
+                self.cache = {base: data}      # one chunk: reads go forward through each file
+            d = self.cache[base]
+            o = (lba - base) * 2048
+            return d[o:o + 2048]
         self.f.seek(lba * self.ss)
         raw = self.f.read(self.ss)
         if len(raw) < self.ss:
@@ -594,7 +659,7 @@ def find_disc(P, C):
     """The first image of this game in the "Dave Mirra 2" folder (or one folder inside it), or None."""
     try:
         os.makedirs(P.discdir, exist_ok=True)
-        cands = {".cue": [], ".bin": [], ".iso": []}
+        cands = {".cue": [], ".bin": [], ".iso": [], ".chd": []}
         for dirpath, dirs, files in os.walk(P.discdir):
             if os.path.relpath(dirpath, P.discdir).count(os.sep) >= 1:
                 dirs[:] = []
@@ -602,7 +667,7 @@ def find_disc(P, C):
                 ext = os.path.splitext(n)[1].lower()
                 if ext in cands:
                     cands[ext].append(os.path.join(dirpath, n))
-        for path in cands[".cue"] + cands[".bin"] + cands[".iso"]:
+        for path in cands[".cue"] + cands[".bin"] + cands[".iso"] + cands[".chd"]:
             try:
                 check_disc(C, path)
                 return path
@@ -739,6 +804,9 @@ def _sources(P):
     src = [os.path.join(rt, n) for n in sorted(os.listdir(rt)) if n.endswith(".c")]
     src += [os.path.join(P.gen, n) for n in sorted(os.listdir(P.gen)) if n.endswith(".c")]
     src += [os.path.join(P.gen_iop, n) for n in sorted(os.listdir(P.gen_iop)) if n.endswith(".c")]
+    chdr = os.path.join(P.project, "third_party", "libchdr_all.c")     # CHD images (v0.2.1 on)
+    if os.path.isfile(chdr):
+        src.append(chdr)
     hdr = []
     for d in (rt, P.gen, P.gen_vu):
         hdr += [os.path.join(d, n) for n in sorted(os.listdir(d)) if n.endswith(".h")]
@@ -787,7 +855,7 @@ def build_key(P):
     h.update(repr((LINK, LLVM_NAME, flags, RES_ARGS)).encode())   # the compile, icon and link recipe, the compiler
     for p in hdr + src + _resources(P):
         h.update(os.path.basename(p).encode())
-        h.update(file_bytes(p))
+        h.update(source_bytes(p))
     return h.hexdigest()
 
 
@@ -821,7 +889,7 @@ def compile_game(P, C, log, progress=None):
         tag = os.path.basename(os.path.dirname(p)) + "_" + os.path.basename(p)     # runtime_main.c, gen_code_000.c
         o = os.path.join(P.obj, tag[:-2] + ".o")
         objs.append(o)
-        k = key_of(hh, " ".join(_flags(P, p)), P.clang, file_bytes(p))
+        k = key_of(hh, " ".join(_flags(P, p)), P.clang, source_bytes(p))
         newkeys[tag] = k
         if not (os.path.isfile(o) and keys.get(tag) == k):
             todo.append((tag, p, o))

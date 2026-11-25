@@ -16,6 +16,7 @@
 !/bmx2recomp/vu_recipe.json
 !/bmx2recomp/runtime/
 !/bmx2recomp/tools/
+!/bmx2recomp/third_party/
 !/bmx2recomp/gen_vu/
 /bmx2recomp/gen_vu/*
 !/bmx2recomp/gen_vu/*.pcs

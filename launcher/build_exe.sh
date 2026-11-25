@@ -14,6 +14,13 @@ WORK=../work/launcher_pyi
 mkdir -p "$WORK"
 WORK=$(CDPATH= cd -- "$WORK" && pwd)
 printf '%s\n' "$RELEASE_TAG" > "$WORK/release_tag.txt"   # empty without RELEASE_TAG: then the newest is taken
+# chdread.exe reads CHD images for the program (Python cannot decode them); also left next to bmx2launcher.py
+# for runs from source. Needs clang for Windows (llvm-mingw); CC=<compiler> picks another.
+R=../bmx2recomp
+${CC:-clang} -O2 -w -municode -static "$R/tools/chdread.c" "$R/runtime/chd_disc.c" "$R/third_party/libchdr_all.c" \
+  -o "$WORK/chdread.exe"
+cp "$WORK/chdread.exe" chdread.exe
 ${PYTHON:-python} -m PyInstaller --onefile --windowed --noconfirm --clean --name "Dave Mirra Freestyle BMX 2" \
-  --add-data "$WORK/release_tag.txt:." --distpath "$OUT" --workpath "$WORK" --specpath "$WORK" bmx2launcher.py
+  --add-data "$WORK/release_tag.txt:." --add-binary "$WORK/chdread.exe:." \
+  --distpath "$OUT" --workpath "$WORK" --specpath "$WORK" bmx2launcher.py
 echo "built $OUT/Dave Mirra Freestyle BMX 2.exe"

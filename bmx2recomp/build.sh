@@ -19,6 +19,10 @@ ls gen/*.c gen_iop/*.c runtime/*.c | xargs -P 16 -I{} sh -c '
   if [ ! -f "$obj" ] || [ "$src" -nt "$obj" ] || [ runtime/ee.h -nt "$obj" ] || [ runtime/rt.h -nt "$obj" ] || [ runtime/iop.h -nt "$obj" ] || { case "$src" in runtime/*) [ runtime/config.h -nt "$obj" ] || [ runtime/gs.h -nt "$obj" ];; *) false;; esac; } || { [ "$src" = runtime/vu.c ] && [ -f gen_vu/vu1_rec.h ] && [ gen_vu/vu1_rec.h -nt "$obj" ]; }; then
     $CC $CFLAGS -c "$src" -o "$obj" || exit 255
   fi'
+# libchdr (CHD images, runtime/chd_disc.c): third-party code, built once without warnings
+if [ ! -f build/obj/libchdr_all.o ] || [ -n "$(find third_party -newer build/obj/libchdr_all.o -name '*.[ch]' | head -1)" ]; then
+  $CC $OPT -w -c third_party/libchdr_all.c -o build/obj/libchdr_all.o
+fi
 # icon (from the disc's memory card icon) and name: runtime/bmx2.rc
 if [ -f ../disc/ASSETS/ICON.DAT ] && { [ ! -f gen/bmx2.ico ] || [ tools/make_icon.py -nt gen/bmx2.ico ]; }; then
   python -I tools/make_icon.py ../disc/ASSETS/ICON.DAT gen/bmx2.ico
