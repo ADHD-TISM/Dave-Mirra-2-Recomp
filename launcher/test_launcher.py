@@ -262,9 +262,17 @@ def test_a_chd_needs_a_build_that_reads_chd(d):
 def test_a_wrong_or_missing_disc_exits_7(d):
     iso = os.path.join(d, "other.iso")
     _make_iso(iso)          # an ISO 9660 image with no SYSTEM.CNF: not this game
-    for args in (["--disc=" + iso, "prepare", "--accept-downloads"], ["--disc=" + os.path.join(d, "gone.iso"), "run"]):
-        code = bl.cli(["--root", os.path.join(d, "root")] + args)
-        check(code == bl.BAD_DISC == 7, "%r gave %r" % (args, code))
+    def no_download(*a, **k):
+        raise AssertionError("the disc must be refused before any download")
+    with _Stubs(install_toolchain=no_download, install_project=no_download):
+        for args in (["--disc=" + iso, "prepare", "--accept-downloads"], ["--disc=" + os.path.join(d, "gone.iso"), "run"]):
+            code = bl.cli(["--root", os.path.join(d, "root")] + args)
+            check(code == bl.BAD_DISC == 7, "%r gave %r" % (args, code))
+    P = bl.Paths(os.path.join(d, "root"))     # a built game, but no disc chosen at all
+    os.makedirs(P.game, exist_ok=True)
+    open(P.exe, "w").close()
+    code = bl.cli(["--root", P.root, "run"])
+    check(code == 7, "run with no disc chosen gave %r" % code)
 
 
 def test_identify_does_not_cache_a_chdread_failure(d):

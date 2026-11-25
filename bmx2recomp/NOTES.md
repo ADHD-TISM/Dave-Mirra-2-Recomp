@@ -92,10 +92,12 @@ are older snapshots, kept for history.
   recomplauncher.json: the setup step's own check_disc (open_session, run
   before any download) now refuses a wrong disc with a message. Then the
   check became {"ids": ["SLUS-20159"]} (DEVELOPERS.md: a PS2 disc's serial;
-  it is also how RecompLauncher finds the player's copies, which no check
-  loses), to be tried on a .chd in RecompLauncher. A missing or wrong disc
-  makes prepare and run exit 7 (DiscFail), which exit_codes explains
-  (code 1 showed nothing useful in RecompLauncher).
+  it is also how RecompLauncher finds the player's copies, which dropping the
+  check would lose). Tried in RecompLauncher 0.90 Beta 68 (2026-11-24):
+  setup and Play from cd.chd work, and a PS1 disc is refused at the pick by
+  the serial check. Cross = M (key binding) works in the game. A missing or wrong disc
+  makes prepare and run exit 7 (DiscFail): for run exit_codes explains it,
+  a failed prepare shows its last error line (code 1 said nothing useful).
 - Review fixes (CHD round): build_exe.sh writes THIRD_PARTY_NOTICES.txt
   (libchdr, zstd, miniz, LZMA, dr_flac, Python licences) into the program
   and the release zip (BSD/MIT need the notice with a binary); a stored

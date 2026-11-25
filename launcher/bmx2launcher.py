@@ -12,6 +12,7 @@ nothing is written outside the root folder.
                                                download the tools, build the game (RecompLauncher's setup step)
     Dave Mirra Freestyle BMX 2.exe --root DIR --disc=FILE run
                                                start the game and wait until it ends; its exit code is the game's
+                                               (7: the disc is missing or another game; 1: another problem)
                                                (words after run go to the game, e.g. run --frames 600)
     ... status                                 what is ready
     ... download|update|build|play|update-launcher
@@ -1057,7 +1058,7 @@ def play(P, C, log, wait=False, extra=()):
         raise Fail("the game is not built yet (run prepare, or build)")
     disc = C.get("disc")
     if not disc:
-        raise Fail("no game image chosen (--disc=FILE)")
+        raise DiscFail("no game image chosen (--disc=FILE)")
     image = resolve_image(disc)
     if is_chd(image) and not C.get("build_chd"):     # a build from v0.2.0 or older reads a .chd as raw sectors
         raise Fail("this build of the game cannot read .chd images: run the setup step again (prepare)")
@@ -1175,7 +1176,8 @@ def open_session(root, disc=None):
 
 
 NEEDS_DOWNLOADS = 10    # prepare's exit code; the game's own codes (3, 4, 5, 6) mean something else
-BAD_DISC = 7            # prepare and run: the disc image is missing or another game (recomplauncher.json exit_codes)
+BAD_DISC = 7            # the disc image is missing or another game: for run, recomplauncher.json exit_codes
+                        # explains it; a failed prepare shows its last error line on the setup screen
 
 
 def prepare(P, C, accept, log):
@@ -1187,7 +1189,7 @@ def prepare(P, C, accept, log):
         print("progress %.3f %s" % (min(max(f, 0.0), 1.0), text), flush=True)
     disc = C.get("disc")
     if not disc:
-        raise Fail("prepare: no disc image given (--disc=FILE)")
+        raise DiscFail("prepare: no disc image given (--disc=FILE)")
     if not (toolchain_ok(P) and project_ok(P)) and not accept:
         print("the build tools and the project are not downloaded yet, and --accept-downloads was not given",
               flush=True)
