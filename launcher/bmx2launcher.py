@@ -346,15 +346,56 @@ def latest_tag(log, strict=False):
     return max(tags, key=version_tuple) if tags else None
 
 
+TOOL_MARK = "bmx2-tools-version.txt"     # in tools/llvm-mingw and tools/python: which pinned version is there
+# the only versions pinned before the marks existed (v0.2.1 and older): an unmarked install of them is kept
+UNMARKED = {"llvm": "llvm-mingw-20261104-ucrt-x86_64", "python": "python-3.12.8-embed-amd64"}
+PY_NAME = PY_URL.rsplit("/", 1)[1][:-len(".zip")]     # python-3.12.8-embed-amd64
+
+
+def _tool_current(folder, tool_file, kind, want):
+    """True when tool_file is there and folder's mark names want. An unmarked folder from before the marks
+    counts as the version those launchers pinned, and gets its mark."""
+    if not os.path.isfile(tool_file):
+        return False
+    mark = os.path.join(folder, TOOL_MARK)
+    try:
+        with open(mark, encoding="utf-8") as f:
+            return f.read().strip() == want
+    except OSError:
+        pass
+    if UNMARKED[kind] != want:
+        return False
+    try:
+        with open(mark, "w", encoding="utf-8") as f:
+            f.write(want + "\n")
+    except OSError:
+        pass
+    return True
+
+
+def _mark_tool(folder, name):
+    with open(os.path.join(folder, TOOL_MARK), "w", encoding="utf-8") as f:
+        f.write(name + "\n")
+
+
+def compiler_current(P):
+    if os.environ.get("BMX2_CLANG"):        # a developer's own compiler: theirs to keep current
+        return os.path.isfile(P.clang)
+    return _tool_current(P.llvm, P.clang, "llvm", LLVM_NAME)
+
+
+def python_current(P):
+    return not FROZEN or _tool_current(P.pydir, P.tool_python, "python", PY_NAME)
+
+
 def toolchain_ok(P):
-    ok = os.path.isfile(P.clang)
-    if FROZEN:
-        ok = ok and os.path.isfile(P.tool_python)
-    return ok
+    """The pinned compiler (and, packaged, the pinned Python) is installed: a release that pins a newer one
+    makes this false, so the setup step downloads it again."""
+    return compiler_current(P) and python_current(P)
 
 
 def install_toolchain(P, log):
-    if not os.path.isfile(P.clang):
+    if not compiler_current(P):
         z = os.path.join(P.dl, LLVM_NAME + ".zip")
         if not (os.path.isfile(z) and sha256_file(z) == LLVM_SHA256):
             log("downloading the C compiler (about 190 MB)")
@@ -363,17 +404,19 @@ def install_toolchain(P, log):
         tmp = P.llvm + ".tmp"
         shutil.rmtree(tmp, ignore_errors=True)
         safe_extract(z, tmp, strip=1, skip=LLVM_SKIP)
+        _mark_tool(tmp, LLVM_NAME)
         replace_dir(tmp, P.llvm)
         os.remove(z)
     else:
         log("build tools: compiler is installed")
-    if FROZEN and not os.path.isfile(P.tool_python):
+    if not python_current(P):
         z = os.path.join(P.dl, "python-embed.zip")
         log("downloading Python for the code generators (about 11 MB)")
         fetch(PY_URL, z, log, PY_SHA256, "python")
         tmp = P.pydir + ".tmp"
         shutil.rmtree(tmp, ignore_errors=True)
         safe_extract(z, tmp)
+        _mark_tool(tmp, PY_NAME)
         replace_dir(tmp, P.pydir)
         os.remove(z)
     if not toolchain_ok(P):

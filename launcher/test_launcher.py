@@ -2,7 +2,9 @@
 
     python -I launcher/test_launcher.py
 """
+import contextlib
 import importlib.util
+import io
 import os
 import shutil
 import sys
@@ -249,6 +251,30 @@ def test_image_reads_a_chd_through_chdread(d):
     check(bl.is_chd(p) and not bl.is_chd(iso), "is_chd")
 
 
+def test_a_newer_pinned_compiler_is_installed_over_an_old_one(d):
+    P = bl.Paths(d)
+    os.makedirs(os.path.dirname(P.clang))
+    open(P.clang, "w").close()
+    mark = os.path.join(P.llvm, bl.TOOL_MARK)
+    old_env = os.environ.pop("BMX2_CLANG", None)
+    old_name = bl.LLVM_NAME
+    try:
+        check(bl.compiler_current(P), "an unmarked install from v0.2.1 or older is kept")
+        with open(mark, encoding="utf-8") as f:
+            check(f.read().strip() == bl.LLVM_NAME, "and it gets its mark")
+        bl.LLVM_NAME = "llvm-mingw-20990101-ucrt-x86_64"     # a later release pins a newer compiler
+        check(not bl.compiler_current(P) and not bl.toolchain_ok(P), "a newer pinned compiler is not current")
+        os.remove(mark)
+        check(not bl.compiler_current(P), "an unmarked install is not taken for a newer pinned compiler")
+        os.environ["BMX2_CLANG"] = P.clang
+        check(bl.compiler_current(P), "a developer's own compiler (BMX2_CLANG) is never replaced")
+    finally:
+        bl.LLVM_NAME = old_name
+        os.environ.pop("BMX2_CLANG", None)
+        if old_env is not None:
+            os.environ["BMX2_CLANG"] = old_env
+
+
 def test_a_chd_needs_a_build_that_reads_chd(d):
     P = bl.Paths(d)
     os.makedirs(P.game)
@@ -271,12 +297,14 @@ def test_a_wrong_or_missing_disc_exits_7(d):
     P = bl.Paths(os.path.join(d, "root"))     # a built game, but no disc chosen at all
     os.makedirs(P.game, exist_ok=True)
     open(P.exe, "w").close()
-    code = bl.cli(["--root", P.root, "run"])
-    check(code == 7, "run with no disc chosen gave %r" % code)
     with _Stubs(install_toolchain=no_download, install_project=no_download):
-        for cmd in ("prepare", "build"):     # no disc chosen: prepare (before any download) and build
-            code = bl.cli(["--root", P.root, cmd, "--accept-downloads"])
-            check(code == 7, "%s with no disc chosen gave %r" % (cmd, code))
+        # the error text ties each 7 to "no disc chosen", not to a disc saved by an earlier call
+        for cmd, said in (("run", "no game image chosen"), ("play", "no game image chosen"),
+                          ("prepare", "no disc image given"), ("build", "choose it with --disc")):
+            out = io.StringIO()
+            with contextlib.redirect_stdout(out):
+                code = bl.cli(["--root", P.root, cmd, "--accept-downloads"])
+            check(code == 7 and said in out.getvalue(), "%s with no disc chosen gave %r: %r" % (cmd, code, out.getvalue()))
 
 
 def test_identify_does_not_cache_a_chdread_failure(d):

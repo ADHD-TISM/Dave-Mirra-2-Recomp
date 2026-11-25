@@ -96,7 +96,7 @@ are older snapshots, kept for history.
   check would lose). Tried in RecompLauncher 0.90 Beta 68 (2026-11-24):
   setup and Play from cd.chd and dvd.chd work, and a PS1 disc is refused
   at the pick by the serial check. Cross = M (key binding) works in the
-  game. A missing or wrong disc makes prepare, run and build exit 7
+  game. A missing or wrong disc makes prepare, run, play and build exit 7
   (DiscFail): for run exit_codes explains it, a failed prepare shows its
   last error line (code 1 said nothing useful). A .chd that chdread
   refuses (old, damaged) stays 1: 7 would wrongly say another game.
@@ -126,9 +126,16 @@ are older snapshots, kept for history.
   lists OpenSSL, bzip2, libffi, Zstandard, Tcl/Tk). Old CHCD CHDs:
   the message says extractcd + createcd (chdman copy keeps the metadata,
   not checked).
-- Not done (Recomp Standards): a Linux build, Recomp Achievements, dumps values,
-  a new pinned compiler is never installed over an old one (toolchain_ok
-  only checks the file exists; older than this change).
+- Not done (Recomp Standards): a Linux build, Recomp Achievements (both
+  started in their own sessions, 2026-11-24).
+- Done since v0.2.1: dumps = Redump disc 12389 (USA 1.00 / Greatest Hits,
+  1 track Mode 2, 720728064 bytes, CRC32 f37eefca = the user's .bin), for
+  RecompLauncher's verified badge (only a .bin matches; .iso/.chd still
+  work without the badge). A newer pinned compiler or Python is installed
+  over an old one: tools/llvm-mingw and tools/python carry
+  bmx2-tools-version.txt; an unmarked folder counts as the one version
+  pinned before the marks (UNMARKED) and gets marked; BMX2_CLANG is never
+  replaced.
 - Since v0.2.0: bmx2.exe carries a manifest (runtime/bmx2.manifest, in
   bmx2.rc as resource 1 type 24) with activeCodePage UTF-8, so its ANSI
   calls take UTF-8 and a disc or {data} path with any characters works

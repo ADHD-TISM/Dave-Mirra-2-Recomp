@@ -8,7 +8,8 @@
       "id": "game",
       "label": "Your Dave Mirra Freestyle BMX 2 disc image (USA, SLUS-20159, version 1.00): a .bin with its .cue, an .iso, or a .chd.",
       "formats": [{ "type": "file", "extensions": ["bin", "cue", "iso", "chd"] }],
-      "check": { "ids": ["SLUS-20159"] }
+      "check": { "ids": ["SLUS-20159"] },
+      "dumps": [{ "name": "USA (version 1.00, Redump 12389)", "size": 720728064, "crc32": "f37eefca" }]
     }
   ],
   "start": {
