@@ -115,9 +115,15 @@ are older snapshots, kept for history.
   through XTEST (Return, K, Q, Up, Backspace, Right Shift, 1, 3, Escape for
   the menu) all reach the pad. Launcher on Linux: prepare from the .bin
   (exit 0, ~1 min), again ("Already built"), run, and prepare + run from the
-  CD CHD. launcher tests 35 of 35 on both systems (Windows-flow tests run
-  with bl.WIN forced; 3 new Linux tests).
-- Not done / not tested: a gamepad on Linux (no pad in WSL), a real Linux
+  CD CHD. launcher tests 35 of 35 on both systems at the time (Windows-flow
+  tests run with bl.WIN forced; 3 new Linux tests). After the merge with
+  the compiler-key and achievements work (2026-11-25): 41 of 41 on Windows
+  and on Linux (WSL); every test that uses the pinned llvm-mingw carries
+  @windows_flow, and a linux_flow test checks that a new compiler version
+  line changes build_key and the object keys (BMX2_CLANG is Windows-only).
+- Not done / not tested: Recomp Achievements on Linux (built and linked;
+  the AF_UNIX RL_SESSION channel never run; tools/fake_rl.py is
+  Windows-only), a gamepad on Linux (no pad in WSL), a real Linux
   desktop or Steam Deck, RecompLauncher on Linux, a PyInstaller Linux build
   (the tarball runs the .py with the system python3), an AppImage (the
   guide wants tarball + AppImage; the tarball needs the system's dev

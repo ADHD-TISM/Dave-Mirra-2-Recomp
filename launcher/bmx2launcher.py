@@ -336,6 +336,10 @@ def source_bytes(path):
             for n in sorted(files):
                 p = os.path.join(dirpath, n)
                 data += os.path.relpath(p, top).replace(os.sep, "/").encode() + b"\0" + file_bytes(p)
+    if name == "font_posix.c":      # the Linux menu font code includes stb_truetype.h (build.sh tracks it too)
+        stb = os.path.join(here, "..", "third_party", "stb_truetype.h")
+        if os.path.isfile(stb):
+            data += b"stb_truetype.h\0" + file_bytes(stb)
     return data
 
 
@@ -404,7 +408,7 @@ def compiler_id(P):
     """Which compiler builds the objects, for build_key and the object keys: the pinned llvm-mingw; a developer's
     own (BMX2_CLANG) by its size and date; on Linux the system compiler's version line (its path, /usr/bin/cc,
     stays across upgrades and switches). A new compiler at the same path then recompiles everything."""
-    if os.environ.get("BMX2_CLANG"):
+    if WIN and os.environ.get("BMX2_CLANG"):     # Linux uses BMX2_CC (Paths.clang) and its version line
         try:
             st = os.stat(P.clang)
             return "own %d %d" % (st.st_size, st.st_mtime_ns)
@@ -1115,8 +1119,9 @@ def compile_game(P, C, log, progress=None):
         newkeys[tag] = k
         if not (os.path.isfile(o) and keys.get(tag) == k):
             todo.append((tag, p, o))
-    # vu.c (with the recompiled VU1 programs) and libchdr_all.c are the largest files: start them first
-    todo.sort(key=lambda t: t[1].endswith((os.sep + "vu.c", os.sep + "libchdr_all.c")), reverse=True)
+    # vu.c (with the recompiled VU1 programs) and the libchdr and achievements unity files are the largest: first
+    todo.sort(key=lambda t: t[1].endswith((os.sep + "vu.c", os.sep + "libchdr_all.c", os.sep + "rl_achievements_all.c")),
+              reverse=True)
     log("compiling %d of %d files%s" % (len(todo), len(src), " (the first build takes about a minute)" if len(todo) > 20 else ""))
     done = [0]
     errors = []

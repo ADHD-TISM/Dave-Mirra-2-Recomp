@@ -312,6 +312,7 @@ def test_a_newer_pinned_compiler_is_installed_over_an_old_one(d):
             os.environ["BMX2_CLANG"] = old_env
 
 
+@windows_flow
 def test_install_toolchain_marks_a_new_pinned_compiler_and_python(d):
     P = bl.Paths(d)
     clang_rel = os.path.relpath(P.clang, P.llvm).replace(os.sep, "/")
@@ -340,6 +341,7 @@ def test_install_toolchain_marks_a_new_pinned_compiler_and_python(d):
             os.environ["BMX2_CLANG"] = old[2]
 
 
+@windows_flow
 def test_a_new_compiler_changes_the_build_and_object_keys(d):
     root = os.path.join(d, "r")
     for sub, f in (("bmx2recomp/runtime", "main.c"), ("work/gen", "code.c"), ("work/gen_iop", "iop.c"),
@@ -371,6 +373,48 @@ def test_a_new_compiler_changes_the_build_and_object_keys(d):
             os.environ["BMX2_CLANG"] = old[1]
 
 
+def test_a_new_linux_compiler_version_changes_the_build_and_object_keys(d):
+    root = os.path.join(d, "r")
+    for sub, f in (("bmx2recomp/runtime", "main.c"), ("work/gen", "code.c"), ("work/gen_iop", "iop.c"),
+                   ("work/gen_vu", "vu.h")):
+        os.makedirs(os.path.join(root, sub), exist_ok=True)
+        with open(os.path.join(root, sub, f), "w") as fh:
+            fh.write("x")
+    src = os.path.join(root, "bmx2recomp", "runtime", "main.c")
+    version = ["gcc (Ubuntu 11.4.0-1ubuntu1~22.04) 11.4.0"]
+
+    class _R:
+        def __init__(self, out):
+            self.stdout, self.stderr, self.returncode = out, "", 0
+
+    def fake_run(cmd, **k):          # the system compiler's --version, at a path that never changes
+        if "--version" not in cmd:
+            return _R("")             # pkg-config (sdl2_flags on Linux): nothing, so link_args stays fixed
+        return _R(version[0] + "\nCopyright\n")
+    old = (bl.subprocess.run, os.environ.get("BMX2_CC"), os.environ.pop("BMX2_CLANG", None))
+    bl.subprocess.run = fake_run
+    os.environ["BMX2_CC"] = "/usr/bin/cc"
+    try:
+        with linux_flow():
+            P = bl.Paths(root)
+            cid = bl.compiler_id(P)
+            check(cid == version[0], "the version line is the Linux compiler id: %r" % cid)
+            keys = (bl.build_key(P), bl.object_key(P, "h", cid, src))
+            check((bl.build_key(P), bl.object_key(P, "h", bl.compiler_id(P), src)) == keys, "same compiler, same keys")
+            os.environ["BMX2_CLANG"] = os.path.join(d, "stray")     # Windows-only: ignored here
+            check(bl.compiler_id(P) == cid, "BMX2_CLANG does not change the Linux compiler id")
+            version[0] = "gcc (Ubuntu 12.3.0-1ubuntu1~22.04) 12.3.0"     # an upgrade at /usr/bin/cc
+            new = (bl.build_key(P), bl.object_key(P, "h", bl.compiler_id(P), src))
+            check(new[0] != keys[0] and new[1] != keys[1], "a new compiler version changes both keys")
+    finally:
+        bl.subprocess.run = old[0]
+        for name, value in (("BMX2_CC", old[1]), ("BMX2_CLANG", old[2])):
+            os.environ.pop(name, None)
+            if value is not None:
+                os.environ[name] = value
+
+
+@windows_flow
 def test_compile_game_recompiles_every_file_after_a_compiler_change(d):
     root = os.path.join(d, "r")
     for sub, f in (("bmx2recomp/runtime", "main.c"), ("bmx2recomp/runtime", "pad.c"), ("work/gen", "code.c"),
