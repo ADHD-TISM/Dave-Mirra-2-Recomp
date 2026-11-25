@@ -29,7 +29,7 @@ int main(void) {
           && strstr(err, "not a data track"), "audio first track refused");
     check(chd_disc_parse_track1("TRACK:1 TYPE:MODE1 SUBTYPE:NONE FRAMES:10 PREGAP:10 PGTYPE:VMODE1 PGSUB:RW POSTGAP:0",
                                 1, err, sizeof err, &frames, &lead, &off) < 0, "pregap as long as the track refused");
-    memset(big, 'A', 150);       /* 150: the longest field that still fits meta[256] with the rest of a line */
+    memset(big, 'A', 150);       /* 150: fits meta[256] with the rest of the longest line (checked below) */
     big[150] = 0;
     static const struct { int v2; const char *fmt; int ok; const char *what; } longs[] = {
         { 1, "TRACK:1 TYPE:%s SUBTYPE:NONE FRAMES:10 PREGAP:0 PGTYPE:MODE1 PGSUB:RW POSTGAP:0", 0, "long TYPE refused" },
@@ -41,10 +41,10 @@ int main(void) {
     };
     for (unsigned i = 0; i < sizeof longs / sizeof longs[0]; i++) {
         frames = 99; lead = 99; off = 99; err[0] = 0;
-        snprintf(meta, sizeof meta, longs[i].fmt, big);
+        if (snprintf(meta, sizeof meta, longs[i].fmt, big) >= (int)sizeof meta) { check(0, "test line too long"); continue; }
         int r = chd_disc_parse_track1(meta, longs[i].v2, err, sizeof err, &frames, &lead, &off);
         check(longs[i].ok ? r == 1 && frames == 10 && lead == 0 && off == 0
-                          : r < 0 && strstr(err, "unreadable CD track information") && frames == 99 && lead == 99,
+                          : r < 0 && strstr(err, "unreadable CD track information") && frames == 99 && lead == 99 && off == 99,
               longs[i].what);
     }
     printf("%s\n", failed ? "FAILED" : "all passed");

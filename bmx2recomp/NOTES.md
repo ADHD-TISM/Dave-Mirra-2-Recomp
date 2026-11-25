@@ -84,7 +84,12 @@ are older snapshots, kept for history.
   chdman 0.289 (MAME, used locally only): createcd (cdlz/cdzl/cdfl) and
   createdvd (lzma/zlib/huff/flac) of the USA disc both decode to the exact
   .iso bytes, prepare from the CD CHD and 1140 frames from either play with
-  no frame over 17 ms. Not checked: RecompLauncher's iso9660 check on a .chd.
+  no frame over 17 ms. RecompLauncher 0.90 Beta 68's own iso9660 check
+  refuses both CHD kinds at Set Up ("That disc image isn't the release
+  this recomp reads"; its picker accepts them), and a check is per input,
+  not per format, so the user chose to drop the check from
+  recomplauncher.json: the setup step's own check_disc (open_session, run
+  before any download) now refuses a wrong disc with exit 1 and a message.
 - Review fixes (CHD round): build_exe.sh writes THIRD_PARTY_NOTICES.txt
   (libchdr, zstd, miniz, LZMA, dr_flac, Python licences) into the program
   and the release zip (BSD/MIT need the notice with a binary); a stored
@@ -101,8 +106,9 @@ are older snapshots, kept for history.
   with its own widths (%31s), never libchdr's CDROM_TRACK_METADATA(2)_FORMAT
   macros (bare %s: a crafted .chd overflowed the 32-byte buffers). The
   parse is chd_disc_parse_track1, tested by tools/test_chd_disc.c (build
-  line in the file, with -fsanitize=address; 9 cases incl. 200-character
-  fields). build_exe.sh stops when Python's LICENSE.txt is missing (it also
+  line in the file; 12 cases, each long field given alone with 150
+  characters and the exact result asserted, which is the guard: ASan on
+  mingw does not see sscanf's writes; every bare-%s mutant fails it). build_exe.sh stops when Python's LICENSE.txt is missing (it also
   lists OpenSSL, bzip2, libffi, Zstandard, Tcl/Tk). Old CHCD CHDs:
   the message says extractcd + createcd (chdman copy keeps the metadata,
   not checked).

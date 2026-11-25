@@ -19,10 +19,14 @@ static void missing_code(u32 addr, const char *what) {
     FILE *m = fopen("missing_entries.txt", "a");
     if (m) { fprintf(m, "%08x\n", addr); fclose(m); }
     if (show_window) {
-        char msg[512];
+        /* the file is in the current folder: the game folder (recompdata\game under RecompLauncher), or disc\ */
+        char where[1024], msg[1600];
+        DWORD n = GetFullPathNameA("missing_entries.txt", sizeof where, where, NULL);
+        if (!n || n >= sizeof where) snprintf(where, sizeof where, "missing_entries.txt in the game's folder");
         snprintf(msg, sizeof msg, "The game %s %08x, which was not recompiled.\n\n"
-                 "The address was added to disc\\missing_entries.txt. Add it to extra_ee.txt, "
-                 "run tools/recomp_ee.py and build.sh, and the game will get past this point.", what, addr);
+                 "Please open an issue on the project's GitHub page with this address and what you were doing.\n\n"
+                 "The address was also written to %s. Developers: add it to extra_ee.txt, run tools/recomp_ee.py "
+                 "and build.sh, and the game will get past this point.", what, addr, where);
         MessageBoxA(NULL, msg, "bmx2recomp: missing code", MB_OK | MB_ICONERROR);
     }
     exit(3);
