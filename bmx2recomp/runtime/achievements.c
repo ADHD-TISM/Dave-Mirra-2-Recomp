@@ -12,6 +12,7 @@
  * baseline, so neither a loaded save nor a cheat unlocks anything. */
 #include "rt.h"
 #include "../third_party/rl_achievements/include/rl_achievements.h"
+#include <stdlib.h>
 #include <string.h>
 
 #define PROFILES      0x2174a8u  /* 17 rider profiles of 968 bytes */
@@ -33,7 +34,7 @@
 #define RESYNC_FRAMES 300        /* after a save read: the game copies it into the profiles */
 #define BIG_RUN       25000.0f
 
-/* objectives per tier (the game's table at 0x256710, gp-24992) */
+/* objectives per tier (the game's table at 0x2566d0, gp-24992) */
 static const u8 tier_goals[5] = { 1, 4, 4, 4, 1 };
 
 static u8 base[NPROF * PROF_SIZE];   /* the profiles as last seen */
@@ -64,6 +65,11 @@ static u32 read_ram(u32 address, u8 *buf, u32 n, void *ud) {
 
 void ach_init(void) {
     if (rl_ach_init("ps2", read_ram, NULL)) LOG("ach: connected to RecompLauncher\n");   /* reads RL_SESSION once */
+    /* test tools that write memory or play the pad (main.c EE_POKE, pad.c PAD_SCRIPT): never Ranked */
+    if (getenv("EE_POKE") || getenv("PAD_SCRIPT") || getenv("PAD2_SCRIPT")) {
+        LOG("ach: EE_POKE or a pad script is set: unlocks are Casual\n");
+        rl_ach_casual("debug");
+    }
 }
 
 /* mc.c: the game read its save file (BMX2SAVE.DAT) */

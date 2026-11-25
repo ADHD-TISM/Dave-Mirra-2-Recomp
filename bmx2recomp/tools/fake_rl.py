@@ -51,7 +51,11 @@ def main(argv):
             buf += chunk.raw[:n.value]
             while b"\n" in buf:
                 line, buf = buf.split(b"\n", 1)
-                m = json.loads(line)
+                try:
+                    m = json.loads(line)
+                except ValueError:
+                    print("fake_rl: not JSON: %r" % line[:200], flush=True)
+                    continue
                 got.append(m)
                 extra = ""
                 if m.get("t") == "event":

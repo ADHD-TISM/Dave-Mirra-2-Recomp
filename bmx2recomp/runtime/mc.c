@@ -180,7 +180,7 @@ static int mc_open(int port, const char *path, u32 mode) {
     FILE *f = fopen(hp, m);
     if (!f) return exists ? DENIED : NOENTRY;
     fds[k] = f;
-    fd_is_save[k] = strstr(path, "BMX2SAVE.DAT") != NULL;
+    fd_is_save[k] = (mode & 3) == 1 && strstr(path, "BMX2SAVE.DAT") != NULL;   /* opened to read only */
     return k;
 }
 

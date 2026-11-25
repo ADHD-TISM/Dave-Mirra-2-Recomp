@@ -188,7 +188,7 @@ the launcher program, so THIRD_PARTY_NOTICES is unchanged.
     time left in frames at 0x25bc38. Found by matching the HUD numbers in
     screenshots (4900, 9680, 15430) against EE dumps (EE_DUMP_EVERY).
   - Objectives: byte R + 12*tier + 3*i, low 5 bits = progress, bit 0x40 =
-    done; goals per tier 1,4,4,4,1 (table 0x256710); R+61 tier (Rookie,
+    done; goals per tier 1,4,4,4,1 (table 0x2566d0); R+61 tier (Rookie,
     Amateur, Pro, Hardcore, Expert), R+62 done in tier (objectives_text
     fn_001892e8, goal_progress fn_0017f8d0, tier_recount fn_00181f58). An
     EE_WATCH on R+0 caught goal_progress writing 0xe1 at frame 12417, when
@@ -223,9 +223,13 @@ the launcher program, so THIRD_PARTY_NOTICES is unchanged.
     booting again: the game reads the save at boot, save_loaded is sent once,
     no events.
   - 12000 frames idle at the main menu: no attract demo, no events.
+- EE_POKE, PAD_SCRIPT or PAD2_SCRIPT set at start: casual("debug") is sent
+  (all unlocks of that session are Casual). Save reads count only for
+  BMX2SAVE.DAT opened read-only (mode 1).
 - Not checked: the real game reaching events 3-12 (needs real play); replay
-  playback (Cool Stuff > Load Replay) may drive the HUD score and give
-  first_trick; RecompLauncher 0.90 Beta 68 itself (it sets RL_SESSION, but
+  playback (Cool Stuff > Load Replay, BMX2RPLY.DAT, no save_loaded) may
+  drive the HUD score and give first_trick or big_run; whether Freeride or
+  Session show a score with no time limit (big_run says "single run"); RecompLauncher 0.90 Beta 68 itself (it sets RL_SESSION, but
   the game has no hosted list there and that version has no developer
   log). game_mode (0x257cb6) stayed 0 through menus and ProQuest, so it
   cannot gate the checks to "riding".
