@@ -4,8 +4,10 @@
 int g_gs_thread_cfg = 1;   /* gsthread.c: 0 = graphics on the EE thread */
 #include <ctype.h>
 #include <stdlib.h>
-#include <windows.h>
+#include "plat.h"
+#ifdef _WIN32
 #include <io.h>
+#endif
 
 bmx2_cfg g_cfg = {
     .scale = 0, .window_w = 0, .window_h = 0, .fullscreen = 0, .stretch = 0, .smooth = 1,
@@ -175,10 +177,17 @@ int config_save(const char *const *keys, const char *const *vals, int nkeys) {
         if (!done[i]) { fprintf(o, "%s%s = %s%s", last_nl ? "" : eol, keys[i], vals[i], eol); last_nl = 1; }
     free(text);
     int ok = fflush(o) == 0 && !ferror(o);
+#ifdef _WIN32
     if (ok) ok = FlushFileBuffers((HANDLE)_get_osfhandle(_fileno(o))) != 0;   /* on disk before it replaces the old file */
     ok = fclose(o) == 0 && ok;
     if (ok) ok = MoveFileExA(tmp, loaded_path, MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH) != 0;
     if (!ok) DeleteFileA(tmp);
+#else
+    if (ok) ok = fsync(fileno(o)) == 0;                    /* on disk before it replaces the old file */
+    ok = fclose(o) == 0 && ok;
+    if (ok) ok = rename(tmp, loaded_path) == 0;            /* replaces it in one step */
+    if (!ok) remove(tmp);
+#endif
     LOG(ok ? "config: menu settings written to %s\n" : "config: could not write %s, it is unchanged\n", loaded_path);
     return ok;
 }

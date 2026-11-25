@@ -4,8 +4,14 @@
  * counts go to <file> as "offset count" lines, offset = RIP - image base.
  * Resolve with: python -I tools/prof.py build/bmx2.exe <file> */
 #include "rt.h"
-#include <windows.h>
+#include "plat.h"
 #include <stdlib.h>
+
+#ifndef _WIN32
+/* Linux: not built (use perf); PROF only says so */
+void prof_here(int stage) { (void)stage; }
+void prof_init(void) { if (getenv("PROF")) LOG("prof: PROF is Windows only; on Linux use perf record\n"); }
+#else
 
 #define NB (1 << 20)
 static u64 keys[NB];
@@ -109,3 +115,4 @@ void prof_init(void) {
     atexit(prof_dump);
     CreateThread(NULL, 0, sampler, NULL, 0, NULL);
 }
+#endif

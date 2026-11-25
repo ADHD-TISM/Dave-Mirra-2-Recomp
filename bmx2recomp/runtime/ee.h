@@ -4,8 +4,8 @@
 #include <string.h>
 #include <math.h>
 
-typedef uint8_t u8; typedef uint16_t u16; typedef uint32_t u32; typedef uint64_t u64;
-typedef int8_t s8; typedef int16_t s16; typedef int32_t s32; typedef int64_t s64;
+typedef uint8_t u8; typedef uint16_t u16; typedef uint32_t u32; typedef unsigned long long u64;   /* not uint64_t: unsigned long on Linux, and the logs print %llu */
+typedef int8_t s8; typedef int16_t s16; typedef int32_t s32; typedef long long s64;
 
 typedef union { u64 d[2]; s64 sd[2]; u32 w[4]; s32 sw[4]; u16 h[8]; s16 sh[8]; u8 b[16]; s8 sb[16]; } r128;
 typedef union { float f; u32 u; s32 s; } fr;

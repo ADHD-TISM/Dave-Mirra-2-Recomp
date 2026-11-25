@@ -15,9 +15,20 @@
  *   being drawn to).
  * - Decoded textures are cached on TEX0/CLUT/TEXA and a per-page write
  *   generation. */
+#ifdef _WIN32
 #define WIN32_LEAN_AND_MEAN
 #include <windows.h>
 #include <GL/gl.h>
+#else
+/* Linux: SDL2 window + OpenGL 3.3 core context (GLX or EGL, SDL's choice); GL 1.1 from libGL */
+#include "plat.h"
+#define GL_GLEXT_LEGACY       /* no glext.h: the newer functions and constants are this file's own, as on Windows */
+#include <GL/gl.h>
+#include <SDL.h>
+#include <EGL/egl.h>
+#include <EGL/eglext.h>
+#define glActiveTexture gsgl_glActiveTexture   /* Mesa's gl.h declares this GL 1.3 function; ours is a loaded pointer */
+#endif
 #include <stdlib.h>
 #include <stdio.h>
 #include <stddef.h>
@@ -112,19 +123,22 @@ GLF(X)
  * documented request for the dedicated chip (NVIDIA Optimus, AMD Switchable
  * Graphics); they change no system setting and do nothing with one chip. The
  * chip the context got is in the log line "gs: OpenGL ... (<renderer>)". */
+#ifdef _WIN32
 __declspec(dllexport) unsigned long NvOptimusEnablement = 1;
 __declspec(dllexport) int AmdPowerXpressRequestHighPerformance = 1;
+#endif
 
 /* ---- window --------------------------------------------------------------- */
-static HWND wnd;
-static HDC dc;
 static int shown, S = 2;
 static BOOL (WINAPI *swap_interval_fn)(int);
 static int vsync_interval, frames_since_check;
 static double swap_wait_ms;
-static HGLRC glrc;
 static u64 n_presents, n_present_gaps, n_present_gaps_late; static double present_gap_max;
 static void choose_vsync(void);
+#ifdef _WIN32
+static HWND wnd;
+static HDC dc;
+static HGLRC glrc;
 
 /* borderless fullscreen on the window's monitor (F11 or Alt+Enter toggles) */
 static RECT saved_rect; static int is_full;
@@ -197,6 +211,92 @@ void gsgl_pump(void) {
     MSG m;
     while (PeekMessageA(&m, NULL, 0, 0, PM_REMOVE)) { TranslateMessage(&m); DispatchMessageA(&m); }
 }
+static void client_size(int *w, int *h) { RECT cr; GetClientRect(wnd, &cr); *w = cr.right; *h = cr.bottom; }
+static void swap_now(void) { SwapBuffers(dc); }
+#define GL_PROC(n) wglGetProcAddress(n)
+#else
+/* ---- window on Linux: SDL2 ------------------------------------------------------- */
+static SDL_Window *win;
+static SDL_GLContext glctx;
+static int is_full;
+static void set_fullscreen(int on) {
+    if (on == is_full) return;
+    SDL_SetWindowFullscreen(win, on ? SDL_WINDOW_FULLSCREEN_DESKTOP : 0);   /* borderless on the window's monitor */
+    is_full = on;
+}
+int menu_on_key(WPARAM vk, LPARAM l); int menu_save_pending(void);
+void plat_sdl_event(const SDL_Event *e);
+void gsgl_pump(void) {
+    SDL_Event e;
+    while (SDL_PollEvent(&e)) {
+        switch (e.type) {
+        case SDL_QUIT: LOG("gs: window closed\n"); menu_save_pending(); exit(0);   /* settings changed in an open menu are kept */
+        case SDL_KEYDOWN: {
+            int vk = plat_vk_from_scancode(e.key.keysym.scancode);
+            if (vk == VK_F11 || (vk == VK_RETURN && (e.key.keysym.mod & KMOD_ALT))) {   /* F11 or Alt+Enter */
+                if (!e.key.repeat) set_fullscreen(!is_full);
+                break;
+            }
+            if (vk) menu_on_key((WPARAM)vk, e.key.repeat ? (LPARAM)1 << 30 : 0);   /* Esc opens the in-game menu */
+            break; }
+        case SDL_CONTROLLERDEVICEADDED: case SDL_CONTROLLERDEVICEREMOVED: plat_sdl_event(&e); break;
+        }
+    }
+}
+/* The window goes on the Dell AW3418DW: the 3440x1440 monitor, else any
+ * non-primary one (display 0 is the primary). */
+static SDL_Rect mon_rect; static int mon_found; static char mon_name[64];
+static void find_monitor(void) {
+    int n = SDL_GetNumVideoDisplays();
+    for (int i = 0; i < n; i++) {
+        SDL_Rect b, u;
+        if (SDL_GetDisplayBounds(i, &b) || SDL_GetDisplayUsableBounds(i, &u)) continue;
+        int dell = b.w == 3440 && b.h == 1440;
+        if (getenv("GS_PRIMARY_MONITOR")) { if (i == 0) { mon_rect = u; mon_found = 1; } }
+        else if (dell || (!mon_found && i > 0)) { mon_rect = u; mon_found = 1 + dell; }
+        else continue;
+        snprintf(mon_name, sizeof mon_name, "%s", SDL_GetDisplayName(i) ? SDL_GetDisplayName(i) : "a display");
+        if (mon_found == 2) break;
+    }
+}
+int gsgl_window_shown(void) { return win && shown; }
+int gsgl_is_fullscreen(void) { return is_full; }
+void gsgl_set_fullscreen(int on) { if (win && shown) set_fullscreen(on); }
+static volatile int vsync_recheck, scale_req;
+void gsgl_recheck_vsync(void) { vsync_recheck = 1; }
+void gsgl_request_scale(int s) { scale_req = s; }
+int gsgl_scale(void) { return scale_req ? scale_req : S; }
+int gsgl_has_focus(void) { return win && shown && (SDL_GetWindowFlags(win) & SDL_WINDOW_INPUT_FOCUS); }
+static void client_size(int *w, int *h) { SDL_GL_GetDrawableSize(win, w, h); }
+static void swap_now(void) { SDL_GL_SwapWindow(win); }
+static BOOL sdl_swap_interval(int i) { return SDL_GL_SetSwapInterval(i) == 0; }
+
+/* No display and no window: EGL straight on the GPU (Mesa's surfaceless platform,
+ * else the default display), no surface; presents end before the swap (!shown). */
+static EGLDisplay egl_dpy; static EGLContext egl_ctx;
+static int egl_headless_init(void) {
+    PFNEGLGETPLATFORMDISPLAYEXTPROC get_platform = (PFNEGLGETPLATFORMDISPLAYEXTPROC)eglGetProcAddress("eglGetPlatformDisplayEXT");
+    if (get_platform) egl_dpy = get_platform(0x31DD /* EGL_PLATFORM_SURFACELESS_MESA */, EGL_DEFAULT_DISPLAY, NULL);
+    if (!egl_dpy || !eglInitialize(egl_dpy, NULL, NULL)) {
+        egl_dpy = eglGetDisplay(EGL_DEFAULT_DISPLAY);
+        if (!egl_dpy || !eglInitialize(egl_dpy, NULL, NULL)) { LOG("gs: no display and no EGL device for a window-less run\n"); return 0; }
+    }
+    /* surface type 0: any config (the default asks for window configs, which surfaceless has none of) */
+    static const EGLint cfg_attrs[] = { EGL_RENDERABLE_TYPE, EGL_OPENGL_BIT, EGL_SURFACE_TYPE, 0, EGL_NONE };
+    static const EGLint ctx_attrs[] = { EGL_CONTEXT_MAJOR_VERSION, 3, EGL_CONTEXT_MINOR_VERSION, 3,
+                                        EGL_CONTEXT_OPENGL_PROFILE_MASK, EGL_CONTEXT_OPENGL_CORE_PROFILE_BIT, EGL_NONE };
+    EGLConfig cfg = (EGLConfig)0; EGLint n = 0;   /* no config at all: EGL_KHR_no_config_context */
+    if (!eglChooseConfig(egl_dpy, cfg_attrs, &cfg, 1, &n) || n < 1) cfg = (EGLConfig)0;
+    if (!eglBindAPI(EGL_OPENGL_API) ||
+        !(egl_ctx = eglCreateContext(egl_dpy, cfg, EGL_NO_CONTEXT, ctx_attrs)) ||
+        !eglMakeCurrent(egl_dpy, EGL_NO_SURFACE, EGL_NO_SURFACE, egl_ctx)) {
+        LOG("gs: no EGL OpenGL 3.3 context without a surface (EGL error %x)\n", eglGetError()); return 0;
+    }
+    return 1;
+}
+static void *gl_proc(const char *n) { return egl_ctx ? (void *)eglGetProcAddress(n) : SDL_GL_GetProcAddress(n); }
+#define GL_PROC(n) gl_proc(n)
+#endif
 
 /* ---- GL objects -------------------------------------------------------------- */
 static GLuint prog, cprog, vao, vbo;
@@ -325,7 +425,7 @@ static GLuint compile(GLenum type, const char *src) {
     if (!ok) { char log[2048]; glGetShaderInfoLog(s, sizeof log, NULL, log); LOG("gs: shader error:\n%s\n", log); return 0; }
     return s;
 }
-static GLuint link(const char *vs, const char *fs) {
+static GLuint link_prog(const char *vs, const char *fs) {
     GLuint v = compile(GL_VERTEX_SHADER, vs), f = compile(GL_FRAGMENT_SHADER, fs);
     if (!v || !f) return 0;
     GLuint p = glCreateProgram();
@@ -1326,8 +1426,7 @@ static void present_rect_(u32 fbp, u32 fbw, u32 psm, u32 dbx, u32 dby, u32 w, u3
         }
     }
     if (!shown) return;
-    RECT cr; GetClientRect(wnd, &cr);
-    int cw = cr.right, ch = cr.bottom;
+    int cw, ch; client_size(&cw, &ch);
     glBindFramebuffer(GL_FRAMEBUFFER, 0);
     glViewport(0, 0, cw, ch);
     glDisable(GL_SCISSOR_TEST); glDisable(GL_BLEND); glDisable(GL_DEPTH_TEST);
@@ -1375,7 +1474,7 @@ static void present_rect_(u32 fbp, u32 fbw, u32 psm, u32 dbx, u32 dby, u32 w, u3
     if (frames_since_check++ % 120 == 0 || vsync_recheck) { vsync_recheck = 0; choose_vsync(); }
     LARGE_INTEGER t0, t1, fq; QueryPerformanceCounter(&t0);
     if (ftimes) ftimes_before_swap((u64)t0.QuadPart);
-    SwapBuffers(dc);
+    swap_now();
     QueryPerformanceCounter(&t1); QueryPerformanceFrequency(&fq);
     if (ftimes) ftimes_after_swap((u64)t0.QuadPart, (u64)t1.QuadPart);
     swap_wait_ms = (double)(t1.QuadPart - t0.QuadPart) * 1000.0 / fq.QuadPart;
@@ -1409,6 +1508,15 @@ static void present_rect_(u32 fbp, u32 fbw, u32 psm, u32 dbx, u32 dby, u32 w, u3
  * graphics chip than the renderer (display_on_other_chip, unless
  * vsync_two_chip = 1) keep the timer pacing with vsync off. Checked again
  * every 120 presents, so moving the window to another monitor switches mode. */
+static int gpu_vendor(const char *s);
+static int gl_vendor;   /* of the context's renderer, set at start-up */
+#ifndef _WIN32
+static int display_hz(void) {
+    SDL_DisplayMode m; int i = SDL_GetWindowDisplayIndex(win);
+    return i >= 0 && !SDL_GetCurrentDisplayMode(i, &m) ? m.refresh_rate : 0;
+}
+static int display_on_other_chip(void) { return 0; }   /* Linux: PRIME offload is the system's choice (DRI_PRIME, __NV_PRIME_RENDER_OFFLOAD) */
+#else
 static int display_hz(void) {
     HMONITOR m = MonitorFromWindow(wnd, MONITOR_DEFAULTTONEAREST);
     MONITORINFOEXA mi; mi.cbSize = sizeof mi;
@@ -1417,6 +1525,7 @@ static int display_hz(void) {
     if (!EnumDisplaySettingsA(mi.szDevice, ENUM_CURRENT_SETTINGS, &dm)) return 0;
     return (int)dm.dmDisplayFrequency;
 }
+#endif
 /* 1 NVIDIA, 2 Intel, 3 AMD, 0 unknown */
 static int gpu_vendor(const char *s) {
     if (!s) return 0;
@@ -1425,7 +1534,7 @@ static int gpu_vendor(const char *s) {
     if (strstr(s, "AMD") || strstr(s, "Radeon")) return 3;
     return 0;
 }
-static int gl_vendor;   /* of the context's renderer, set at start-up */
+#ifdef _WIN32
 /* 1 when the window's monitor hangs on a different graphics chip than the one
  * rendering (a two-chip laptop: NVIDIA draws, the Intel chip drives the panel).
  * The picture is then copied between the chips, and the driver's vsync on that
@@ -1442,6 +1551,7 @@ static int display_on_other_chip(void) {
         if (!strcmp(dd.DeviceName, mi.szDevice)) { int v = gpu_vendor(dd.DeviceString); return v && v != gl_vendor; }
     return 0;
 }
+#endif
 static void choose_vsync(void) {
     static int env_off = -1;
     if (env_off < 0) env_off = getenv("NO_VSYNC") != 0;
@@ -1461,8 +1571,19 @@ static void choose_vsync(void) {
 }
 int gsgl_vsync_paced(void) { return vsync_interval > 0; }
 /* the graphics thread (gsthread.c) takes the context over from the EE thread */
+#ifdef _WIN32
 void gsgl_unbind_context(void) { wglMakeCurrent(NULL, NULL); }
 void gsgl_bind_context(void) { if (!wglMakeCurrent(dc, glrc)) LOG("gs: cannot make the GL context current on the graphics thread\n"); }
+#else
+void gsgl_unbind_context(void) {
+    if (egl_ctx) eglMakeCurrent(egl_dpy, EGL_NO_SURFACE, EGL_NO_SURFACE, EGL_NO_CONTEXT);
+    else SDL_GL_MakeCurrent(win, NULL);
+}
+void gsgl_bind_context(void) {
+    if (egl_ctx ? !eglMakeCurrent(egl_dpy, EGL_NO_SURFACE, EGL_NO_SURFACE, egl_ctx) : SDL_GL_MakeCurrent(win, glctx) != 0)
+        LOG("gs: cannot make the GL context current on the graphics thread\n");
+}
+#endif
 double gsgl_swap_wait_ms(void) { return swap_wait_ms; }
 
 void gsgl_stats(void) {
@@ -1492,6 +1613,39 @@ int gsgl_init(int show_window, int scale) {
     if (getenv("GS_SHOT_FROM")) shot_from = strtoull(getenv("GS_SHOT_FROM"), 0, 10);
     if (getenv("GS_SHOT_TO")) shot_to = strtoull(getenv("GS_SHOT_TO"), 0, 10);
 
+#ifndef _WIN32
+    /* a run without a window (--no-window) and without a display (ssh, CI): an EGL context with no surface */
+    if (!shown && !getenv("DISPLAY") && !getenv("WAYLAND_DISPLAY")) {
+        if (SDL_Init(SDL_INIT_EVENTS)) LOG("gs: SDL events: %s\n", SDL_GetError());
+        if (!egl_headless_init()) return 0;
+    } else {
+    if (SDL_Init(SDL_INIT_VIDEO | SDL_INIT_EVENTS)) { LOG("gs: SDL video: %s\n", SDL_GetError()); return 0; }
+    if (SDL_InitSubSystem(SDL_INIT_GAMECONTROLLER)) LOG("gs: no gamepads (%s)\n", SDL_GetError());
+    int ww = g_cfg.window_w ? g_cfg.window_w : 1280, wh = g_cfg.window_h ? g_cfg.window_h : (g_cfg.widescreen ? 720 : 960);
+    int x = SDL_WINDOWPOS_CENTERED, y = SDL_WINDOWPOS_CENTERED;
+    find_monitor();
+    if (mon_found) {
+        if (wh > mon_rect.h) { ww = ww * mon_rect.h / wh; wh = mon_rect.h; }
+        x = mon_rect.x + (mon_rect.w - ww) / 2; y = mon_rect.y + (mon_rect.h - wh) / 2;
+    }
+    SDL_GL_SetAttribute(SDL_GL_CONTEXT_MAJOR_VERSION, 3);
+    SDL_GL_SetAttribute(SDL_GL_CONTEXT_MINOR_VERSION, 3);
+    SDL_GL_SetAttribute(SDL_GL_CONTEXT_PROFILE_MASK, SDL_GL_CONTEXT_PROFILE_CORE);
+    SDL_GL_SetAttribute(SDL_GL_DOUBLEBUFFER, 1);
+    SDL_GL_SetAttribute(SDL_GL_RED_SIZE, 8); SDL_GL_SetAttribute(SDL_GL_GREEN_SIZE, 8); SDL_GL_SetAttribute(SDL_GL_BLUE_SIZE, 8);
+    SDL_GL_SetAttribute(SDL_GL_DEPTH_SIZE, 0);
+    win = SDL_CreateWindow("Dave Mirra Freestyle BMX 2", x, y, ww, wh,
+                           SDL_WINDOW_OPENGL | SDL_WINDOW_RESIZABLE | (shown ? SDL_WINDOW_SHOWN : SDL_WINDOW_HIDDEN));
+    if (!win) { LOG("gs: SDL window: %s\n", SDL_GetError()); return 0; }
+    if (shown && g_cfg.fullscreen) set_fullscreen(1);
+    glctx = SDL_GL_CreateContext(win);
+    if (!glctx) { LOG("gs: no OpenGL 3.3 core context (%s)\n", SDL_GetError()); return 0; }
+    SDL_GL_MakeCurrent(win, glctx);
+    swap_interval_fn = sdl_swap_interval;
+    swap_interval_fn(0);   /* choose_vsync() decides at the first present */
+    SDL_StopTextInput();   /* keys only: no input method on the game window */
+    }
+#else
     WNDCLASSA wc = { 0 };
     wc.lpfnWndProc = wndproc; wc.hInstance = GetModuleHandleA(NULL);
     wc.lpszClassName = "bmx2recomp"; wc.hCursor = LoadCursor(NULL, IDC_ARROW); wc.style = CS_OWNDC;
@@ -1527,15 +1681,16 @@ int gsgl_init(int show_window, int scale) {
     wglDeleteContext(legacy);
     swap_interval_fn = (BOOL (WINAPI *)(int))(void *)wglGetProcAddress("wglSwapIntervalEXT");
     if (swap_interval_fn) swap_interval_fn(0);   /* choose_vsync() decides at the first present */
-#define X(r, n, a) n = (r (APIENTRY *) a)(void *)wglGetProcAddress(#n); if (!n) { LOG("gs: missing %s\n", #n); return 0; }
+#endif
+#define X(r, n, a) n = (r (APIENTRY *) a)(void *)GL_PROC(#n); if (!n) { LOG("gs: missing %s\n", #n); return 0; }
     GLF(X)
 #undef X
     LOG("gs: OpenGL %s (%s), scale %dx, window on %s%s\n", (const char *)glGetString(GL_VERSION), (const char *)glGetString(GL_RENDERER),
         S, mon_found ? mon_name : "the default monitor", mon_found == 2 ? " (Dell 3440x1440)" : "");
     gl_vendor = gpu_vendor((const char *)glGetString(GL_RENDERER));
 
-    prog = link(vs_src, fs_src);
-    cprog = link(cvs_src, cfs_src);
+    prog = link_prog(vs_src, fs_src);
+    cprog = link_prog(cvs_src, cfs_src);
     if (!prog || !cprog) return 0;
 #define UL(f) U.f = glGetUniformLocation(prog, "u_" #f)
     UL(rtsize); UL(half); UL(yoff); UL(tex); UL(tme); UL(fst); UL(tfx); UL(tcc); UL(linear); UL(rt24); UL(aem);
@@ -1549,12 +1704,12 @@ int gsgl_init(int show_window, int scale) {
     glUseProgram(prog); glUniform1i(U.tex, 0);
     for (int k = 1; k <= 6; k++) glUniform1i(U.mip[k], k);   /* mip levels 1..6 on texture units 1..6 */
     glUseProgram(cprog); glUniform1i(cu_tex, 0);
-    if ((pprog = link(cvs_src, pfs_src))) {
+    if ((pprog = link_prog(cvs_src, pfs_src))) {
         pu_dst = glGetUniformLocation(pprog, "u_dst"); pu_src = glGetUniformLocation(pprog, "u_src");
         pu_tex = glGetUniformLocation(pprog, "u_tex");
         glUseProgram(pprog); glUniform1i(pu_tex, 0);
     } else LOG("gs: area-filter present shader failed; presenting with one bilinear tap\n");
-    if ((wprog = link(cvs_src, wfs_src))) {
+    if ((wprog = link_prog(cvs_src, wfs_src))) {
         wu_dst = glGetUniformLocation(wprog, "u_dst"); wu_src = glGetUniformLocation(wprog, "u_src");
         wu_tex = glGetUniformLocation(wprog, "u_tex");
         wu_old = glGetUniformLocation(wprog, "u_old"); wu_wrap = glGetUniformLocation(wprog, "u_wrap"); wu_mask = glGetUniformLocation(wprog, "u_mask");
@@ -1570,7 +1725,7 @@ int gsgl_init(int show_window, int scale) {
     glVertexAttribPointer(2, 3, GL_FLOAT, GL_FALSE, sizeof(gs_vertex), (void *)offsetof(gs_vertex, s));
     glVertexAttribPointer(3, 1, GL_FLOAT, GL_FALSE, sizeof(gs_vertex), (void *)offsetof(gs_vertex, fog));
     for (int i = 0; i < 4; i++) glEnableVertexAttribArray(i);
-    if (shown) { glClearColor(0, 0, 0, 1); glClear(GL_COLOR_BUFFER_BIT); SwapBuffers(dc); }
+    if (shown) { glClearColor(0, 0, 0, 1); glClear(GL_COLOR_BUFFER_BIT); swap_now(); }
     gsgl_pump();
     return 1;
 }

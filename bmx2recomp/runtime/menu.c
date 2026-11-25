@@ -10,7 +10,7 @@
  * the window procedure on this thread), pad buttons are polled. */
 #include "rt.h"
 #include "config.h"
-#include <windows.h>
+#include "plat.h"
 #include <stdlib.h>
 
 /* other files */
@@ -126,6 +126,36 @@ static void snapshot(void) {
 }
 
 /* pix: MW x menu_h() pixels, top row first, RGBA in memory order (alpha set) */
+#ifndef _WIN32
+/* Linux: the same picture with font_posix.c (stb_truetype) instead of GDI */
+int font_init(void);
+void font_fill(u32 *pix, int w, int h, int x0, int y0, int x1, int y1, u32 rgb);
+void font_text(u32 *pix, int w, int h, const char *s, int px, int bold, int x0, int y0, int x1, int y1, int align, u32 rgb);
+#define C3(r, g, b) ((u32)(r) | (u32)(g) << 8 | (u32)(b) << 16)
+void menu_render(u32 *pix) {
+    int w = MW, h = menu_h();
+    font_init();
+    AcquireSRWLockShared(&lock);
+    int s = snap.sel; char val[IT_N][48]; memcpy(val, snap.val, sizeof val);
+    ReleaseSRWLockShared(&lock);
+    font_fill(pix, w, h, 0, 0, w, h, C3(18, 20, 26));
+    font_text(pix, w, h, "Paused", 40, 1, 32, 24, w - 32, 80, 0, C3(255, 255, 255));
+    for (int i = 0; i < IT_N; i++) {
+        int y = 96 + i * ROW;
+        if (is_header(i)) { font_text(pix, w, h, label[i], 22, 1, 32, y + 10, w - 32, y + ROW, 0, C3(120, 170, 235)); continue; }
+        if (i == s) font_fill(pix, w, h, 20, y, w - 20, y + ROW - 4, C3(40, 92, 170));
+        font_text(pix, w, h, label[i], 26, 0, 48, y, w / 2 + 40, y + ROW - 4, 0, i == IT_EXIT ? C3(255, 140, 130) : C3(235, 235, 235));
+        if (val[i][0]) {
+            char v[64];
+            if (i != s || i == IT_EXIT) snprintf(v, sizeof v, "%s", val[i]); else snprintf(v, sizeof v, "<  %s  >", val[i]);
+            font_text(pix, w, h, v, 26, 0, w / 2 - 20, y, w - 48, y + ROW - 4, 1, C3(255, 255, 255));
+        }
+    }
+    font_text(pix, w, h, "Up/Down: choose    Left/Right: change    Enter/A: select    Esc/B: resume", 20, 0,
+              32, h - 56, w - 32, h - 16, 2, C3(150, 155, 165));
+    for (int k = 0; k < w * h; k++) pix[k] = (pix[k] & 0xffffffu) | (232u << 24);   /* the panel slightly see-through */
+}
+#else
 void menu_render(u32 *pix) {
     static HDC mdc; static HBITMAP bmp; static u32 *bits; static HFONT f_big, f_norm, f_bold, f_small;
     int w = MW, h = menu_h();
@@ -187,6 +217,7 @@ void menu_render(u32 *pix) {
         pix[k] = ((c >> 16) & 0xff) | (c & 0xff00) | ((c & 0xff) << 16) | (232u << 24);
     }
 }
+#endif
 
 /* ---- input --------------------------------------------------------------------------- */
 enum { A_NONE, A_UP, A_DOWN, A_LEFT, A_RIGHT, A_OK, A_BACK };

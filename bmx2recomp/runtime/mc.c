@@ -19,9 +19,15 @@
  * fn: 1 GetInfo 2 Open 3 Close 4 Seek 5 Read 6 Write 10 Flush 12 ChDir
  *     13 GetDir 14 SetFileInfo 15 Delete 16 Format 17 Unformat, 254 version. */
 #include "rt.h"
-#include <windows.h>
+#include "plat.h"
+#ifdef _WIN32
 #include <direct.h>
 #include <io.h>
+#else
+#include <dirent.h>
+#include <sys/time.h>
+#endif
+#include <ctype.h>
 #include <sys/stat.h>
 #include <time.h>
 
@@ -54,13 +60,33 @@ static void host_path(int port, const char *p, char *out, size_t n) {
         else if (np < 64) { if (l > 63) l = 63; memcpy(parts[np], s, l); parts[np][l] = 0; np++; }
         s = e;
     }
-    int k = snprintf(out, n, MC_ROOT "\\mc%d", port & 1);
-    for (int i = 0; i < np && k >= 0 && (size_t)k < n; i++) k += snprintf(out + k, n - k, "\\%s", parts[i]);   /* stop once truncated */
+    int k = snprintf(out, n, MC_ROOT PATH_SEP "mc%d", port & 1);
+    for (int i = 0; i < np && k >= 0 && (size_t)k < n; i++) k += snprintf(out + k, n - k, PATH_SEP "%s", parts[i]);   /* stop once truncated */
 }
 
 static void ensure_root(int port) {
-    char p[64]; _mkdir(MC_ROOT); snprintf(p, sizeof p, MC_ROOT "\\mc%d", port & 1); _mkdir(p);
+    char p[64]; _mkdir(MC_ROOT); snprintf(p, sizeof p, MC_ROOT PATH_SEP "mc%d", port & 1); _mkdir(p);
 }
+
+/* a host folder's entries (names; "." and ".." included as the system gives them) */
+#ifdef _WIN32
+typedef struct { intptr_t h; struct _finddata64i32_t f; int first; } dir_it;
+static int dir_open(dir_it *d, const char *hd) {
+    char q[2100]; snprintf(q, sizeof q, "%s\\*", hd);
+    d->h = _findfirst64i32(q, &d->f); d->first = 1;
+    return d->h != -1;
+}
+static const char *dir_next(dir_it *d) {
+    if (d->first) { d->first = 0; return d->f.name; }
+    return _findnext64i32(d->h, &d->f) == 0 ? d->f.name : NULL;
+}
+static void dir_close(dir_it *d) { _findclose(d->h); }
+#else
+typedef struct { DIR *d; } dir_it;
+static int dir_open(dir_it *d, const char *hd) { d->d = opendir(hd); return d->d != NULL; }
+static const char *dir_next(dir_it *d) { struct dirent *e = readdir(d->d); return e ? e->d_name : NULL; }
+static void dir_close(dir_it *d) { closedir(d->d); }
+#endif
 
 static int wild(const char *pat, const char *s) {
     if (!*pat) return !*s;
@@ -94,24 +120,23 @@ static int get_dir(int port, const char *path, int maxent, u32 table) {
     int n = 0, root = !strcmp(dirpart, "/") || !dirpart[0];
     if (!strpbrk(pat, "*?")) {                    /* a name: the entry itself */
         char hp[2048]; struct _stat64 st;
-        snprintf(hp, sizeof hp, "%s\\%s", hd, pat);
+        snprintf(hp, sizeof hp, "%s" PATH_SEP "%s", hd, pat);
         if (_stat64(hp, &st)) return 0;
         if (maxent > 0) put_entry(table, pat, &st, (st.st_mode & _S_IFDIR) != 0);
         return 1;
     }
     if (!root && maxent > n && wild(pat, ".")) put_entry(table + 64 * n++, ".", NULL, 1);
     if (!root && maxent > n && wild(pat, "..")) put_entry(table + 64 * n++, "..", NULL, 1);
-    char q[2100]; snprintf(q, sizeof q, "%s\\*", hd);
-    struct _finddata64i32_t f; intptr_t h = _findfirst64i32(q, &f);
-    if (h == -1) return n;
-    do {
-        if (!strcmp(f.name, ".") || !strcmp(f.name, "..") || !wild(pat, f.name)) continue;
+    dir_it d; const char *name;
+    if (!dir_open(&d, hd)) return n;
+    while ((name = dir_next(&d))) {
+        if (!strcmp(name, ".") || !strcmp(name, "..") || !wild(pat, name)) continue;
         if (n >= maxent) break;
-        char hp[2048]; struct _stat64 st; snprintf(hp, sizeof hp, "%s\\%s", hd, f.name);
+        char hp[2048]; struct _stat64 st; snprintf(hp, sizeof hp, "%s" PATH_SEP "%s", hd, name);
         if (_stat64(hp, &st)) continue;
-        put_entry(table + 64 * n++, f.name, &st, (st.st_mode & _S_IFDIR) != 0);
-    } while (_findnext64i32(h, &f) == 0);
-    _findclose(h);
+        put_entry(table + 64 * n++, name, &st, (st.st_mode & _S_IFDIR) != 0);
+    }
+    dir_close(&d);
     return n;
 }
 
@@ -119,29 +144,49 @@ static int get_dir(int port, const char *path, int maxent, u32 table) {
  * file's clusters and each directory's entry clusters (512-byte entries) */
 #define MC_CLUSTERS 8000
 static int used_clusters(const char *hd, int root) {
-    char q[2100]; snprintf(q, sizeof q, "%s\\*", hd);
-    struct _finddata64i32_t f; intptr_t h = _findfirst64i32(q, &f);
+    dir_it d; const char *name;
     int n = 0, used = 0;
-    if (h != -1) {
-        do {
-            if (!strcmp(f.name, ".") || !strcmp(f.name, "..")) continue;
+    if (dir_open(&d, hd)) {
+        while ((name = dir_next(&d))) {
+            if (!strcmp(name, ".") || !strcmp(name, "..")) continue;
             n++;
-            if (f.attrib & _A_SUBDIR) { char sub[2100]; snprintf(sub, sizeof sub, "%s\\%s", hd, f.name); used += used_clusters(sub, 0); }
-            else used += (int)((f.size + 1023) / 1024);
-        } while (_findnext64i32(h, &f) == 0);
-        _findclose(h);
+            char sub[2100]; struct _stat64 st; snprintf(sub, sizeof sub, "%s" PATH_SEP "%s", hd, name);
+            if (_stat64(sub, &st)) continue;
+            if (st.st_mode & _S_IFDIR) used += used_clusters(sub, 0);
+            else used += (int)((st.st_size + 1023) / 1024);
+        }
+        dir_close(&d);
     }
     used += (n + 2 + 1) / 2;                      /* this directory's entries, with . and .. */
     if (root) used -= 1;                          /* the empty root's cluster is part of the 8000 */
     return used;
 }
 static int free_clusters(int port) {
-    char hd[64]; snprintf(hd, sizeof hd, MC_ROOT "\\mc%d", port & 1);
+    char hd[64]; snprintf(hd, sizeof hd, MC_ROOT PATH_SEP "mc%d", port & 1);
     int f = MC_CLUSTERS - used_clusters(hd, 1);
     return f < 0 ? 0 : f;
 }
 
 /* a 64-byte table entry's date (8 bytes: 0, sec, min, hour, day, month, year16) -> FILETIME */
+#ifndef _WIN32
+/* Linux: no creation time to set; the modified time from the local date (as put_dt writes) */
+static int get_dt(u32 a, time_t *t) {
+    u8 d[8]; for (int i = 0; i < 8; i++) d[i] = mr8(a + i);
+    u16 y; memcpy(&y, d + 6, 2);
+    if (!y || !d[5] || !d[4]) return 0;
+    struct tm tm = { 0 };
+    tm.tm_year = y - 1900; tm.tm_mon = d[5] - 1; tm.tm_mday = d[4]; tm.tm_hour = d[3]; tm.tm_min = d[2]; tm.tm_sec = d[1];
+    tm.tm_isdst = -1;
+    *t = mktime(&tm);
+    return *t != (time_t)-1;
+}
+static void set_times(const char *hp, u32 info, int create, int modify) {
+    (void)create; time_t m;
+    if (!modify || !get_dt(info + 8, &m)) return;
+    struct timeval tv[2] = { { m, 0 }, { m, 0 } };
+    utimes(hp, tv);
+}
+#else
 static int get_dt(u32 a, FILETIME *ft) {
     u8 d[8]; for (int i = 0; i < 8; i++) d[i] = mr8(a + i);
     SYSTEMTIME t = { 0 }; u16 y; memcpy(&y, d + 6, 2);
@@ -158,6 +203,7 @@ static void set_times(const char *hp, u32 info, int create, int modify) {
     SetFileTime(h, hc ? &c : NULL, NULL, hm ? &m : NULL);
     CloseHandle(h);
 }
+#endif
 
 static int mc_open(int port, const char *path, u32 mode) {
     if (port & 1) return NOENTRY;
@@ -246,7 +292,7 @@ void mc_rpc(u32 fn, u8 *b) {
             char nn[33]; for (int i = 0; i < 32; i++) nn[i] = (char)mr8(info + 32 + i); nn[32] = 0;
             if (!nn[0] || strpbrk(nn, "/\\:") || !strcmp(nn, ".") || !strcmp(nn, "..")) { r = NOENTRY; break; }   /* the new name must stay a plain file name */
             char from[2048], to[2048]; host_path(port, (const char *)b + 20, from, sizeof from);
-            snprintf(to, sizeof to, "%s", from); char *s = strrchr(to, '\\'); if (s) snprintf(s + 1, sizeof to - (size_t)(s + 1 - to), "%s", nn);
+            snprintf(to, sizeof to, "%s", from); char *s = strrchr(to, PATH_SEP[0]); if (s) snprintf(s + 1, sizeof to - (size_t)(s + 1 - to), "%s", nn);
             r = rename(from, to) ? NOENTRY : 0;
         } else r = 0;
         break; }

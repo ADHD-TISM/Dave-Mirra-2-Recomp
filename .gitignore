@@ -26,4 +26,5 @@
 !/launcher/bmx2launcher.py
 !/launcher/build_exe.sh
 !/launcher/release.sh
+!/launcher/linux_program.sh
 !/launcher/test_launcher.py

@@ -1,7 +1,7 @@
 /* EE kernel HLE: syscalls, threads (one host fiber per guest thread),
  * semaphores, INTC/DMAC handlers, alarms and the vblank clock. */
 #include "rt.h"
-#include <windows.h>
+#include "plat.h"
 #include <stdlib.h>
 
 #define EE_HZ        294912000ull

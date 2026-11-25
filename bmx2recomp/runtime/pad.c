@@ -30,7 +30,7 @@
 #include "rt.h"
 #include "config.h"
 #include "iop.h"
-#include <windows.h>
+#include "plat.h"
 #include <stdlib.h>
 
 /* button bits of the 16-bit word (data[2] low byte, data[3] high byte), active low */
@@ -53,10 +53,15 @@ static u32 act_buf[2];                  /* IOP address per port (slot 0), 0 = no
 static u8 act_align[2][6] = { { 0, 1, 0xff, 0xff, 0xff, 0xff }, { 0, 1, 0xff, 0xff, 0xff, 0xff } };
 
 /* ---- host input ------------------------------------------------------------ */
+#ifdef _WIN32
 typedef struct { WORD buttons; BYTE lt, rt; SHORT lx, ly, rx, ry; } xi_gamepad;
 typedef struct { DWORD packet; xi_gamepad g; } xi_state;
-static DWORD (WINAPI *xi_get)(DWORD, xi_state *);
 typedef struct { WORD left, right; } xi_vibration;     /* left = low-frequency (large) motor */
+#else
+typedef plat_xi_state xi_state;                         /* SDL game controllers in XInput's layout (plat_sdl.c) */
+typedef plat_xi_vibration xi_vibration;
+#endif
+static DWORD (WINAPI *xi_get)(DWORD, xi_state *);
 static DWORD (WINAPI *xi_set)(DWORD, xi_vibration *);
 static int xi_tried;
 static void xi_load(void);
@@ -79,6 +84,7 @@ static int xi_read(DWORD idx, xi_state *x) {
 
 static void xi_load(void) {
     xi_tried = 1;
+#ifdef _WIN32
     const char *dlls[] = { "xinput1_4.dll", "xinput1_3.dll", "xinput9_1_0.dll" };
     for (int i = 0; i < 3 && !xi_get; i++) {
         HMODULE m = LoadLibraryA(dlls[i]);
@@ -87,6 +93,9 @@ static void xi_load(void) {
             xi_set = (DWORD (WINAPI *)(DWORD, xi_vibration *))(void *)GetProcAddress(m, "XInputSetState");
         }
     }
+#else
+    xi_get = plat_xinput_get; xi_set = plat_xinput_set;
+#endif
 }
 
 /* the XInput slot that is this player's pad, or -1 */
