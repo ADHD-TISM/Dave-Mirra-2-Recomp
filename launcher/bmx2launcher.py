@@ -921,12 +921,17 @@ def _res_args(P, res):
     return args + ["-i", res[0]] + RES_ARGS
 
 
+def object_key(P, hh, cid, p):
+    """The cache key of one source file's object: headers (hh), flags, compiler and the source itself."""
+    return key_of(hh, " ".join(_flags(P, p)), P.clang, cid, source_bytes(p))
+
+
 def build_key(P):
     src, hdr = _sources(P)
     h = hashlib.sha256(b"build1")
     flags = [a for d in (os.path.join(P.project, "runtime"), P.gen) for a in _flags(P, os.path.join(d, "x.c"))
              if not os.path.isabs(a)]
-    h.update(repr((LINK, LLVM_NAME, flags, RES_ARGS)).encode())   # the compile, icon and link recipe, the compiler
+    h.update(repr((LINK, compiler_id(P), flags, RES_ARGS)).encode())   # the compile, icon and link recipe, the compiler
     for p in hdr + src + _resources(P):
         h.update(os.path.basename(p).encode())
         h.update(source_bytes(p))
@@ -949,6 +954,7 @@ def compile_game(P, C, log, progress=None):
         return
     src, hdr = _sources(P)
     hh = hashlib.sha256(b"".join(file_bytes(p) for p in hdr)).hexdigest()
+    cid = compiler_id(P)     # one compiler for the whole build
     os.makedirs(P.obj, exist_ok=True)
     keyfile = os.path.join(P.obj, "keys.json")
     try:
@@ -963,7 +969,7 @@ def compile_game(P, C, log, progress=None):
         tag = os.path.basename(os.path.dirname(p)) + "_" + os.path.basename(p)     # runtime_main.c, gen_code_000.c
         o = os.path.join(P.obj, tag[:-2] + ".o")
         objs.append(o)
-        k = key_of(hh, " ".join(_flags(P, p)), P.clang, compiler_id(P), source_bytes(p))
+        k = object_key(P, hh, cid, p)
         newkeys[tag] = k
         if not (os.path.isfile(o) and keys.get(tag) == k):
             todo.append((tag, p, o))

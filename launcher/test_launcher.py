@@ -269,6 +269,7 @@ def test_a_newer_pinned_compiler_is_installed_over_an_old_one(d):
         check(not bl.compiler_current(P) and not bl.toolchain_ok(P), "a newer pinned compiler is not current")
         os.remove(mark)
         check(not bl.compiler_current(P), "an unmarked install is not taken for a newer pinned compiler")
+        bl.LLVM_NAME = bl.UNMARKED["llvm"]     # where it matters: else it would be re-marked and accepted
         with open(mark, "wb") as f:
             f.write(bytes([0xff, 0xfe]) + b" junk")
         check(not bl.compiler_current(P), "an unreadable mark means install again, not a crash")
@@ -299,8 +300,9 @@ def test_install_toolchain_marks_a_new_pinned_compiler_and_python(d):
                 z.writestr("llvm-mingw-x/" + clang_rel, "clang")
             else:
                 z.writestr("python.exe", "python")
-    old = (bl.LLVM_NAME, bl.FROZEN, os.environ.pop("BMX2_CLANG", None))
-    bl.LLVM_NAME, bl.FROZEN = "llvm-mingw-21000101-ucrt-x86_64", True     # a later release, packaged
+    old = (bl.LLVM_NAME, bl.FROZEN, os.environ.pop("BMX2_CLANG", None), bl.PY_NAME)
+    bl.LLVM_NAME, bl.FROZEN = "llvm-mingw-21000101-ucrt-x86_64", True     # a later release, packaged,
+    bl.PY_NAME = "python-3.99.0-embed-amd64"                               # pinning a newer compiler and Python
     try:
         with _Stubs(fetch=fake_fetch):
             bl.install_toolchain(P, lambda s: None)
@@ -310,9 +312,40 @@ def test_install_toolchain_marks_a_new_pinned_compiler_and_python(d):
                 check(f.read().strip() == want, "%s is marked %s" % (folder, want))
             check(not os.path.exists(os.path.join(folder, bl.TOOL_MARK + ".new")), "no half-written mark left")
     finally:
-        bl.LLVM_NAME, bl.FROZEN = old[0], old[1]
+        bl.LLVM_NAME, bl.FROZEN, bl.PY_NAME = old[0], old[1], old[3]
         if old[2] is not None:
             os.environ["BMX2_CLANG"] = old[2]
+
+
+def test_a_new_compiler_changes_the_build_and_object_keys(d):
+    root = os.path.join(d, "r")
+    for sub, f in (("bmx2recomp/runtime", "main.c"), ("work/gen", "code.c"), ("work/gen_iop", "iop.c"),
+                   ("work/gen_vu", "vu.h")):
+        os.makedirs(os.path.join(root, sub), exist_ok=True)
+        with open(os.path.join(root, sub, f), "w") as fh:
+            fh.write("int x;\n")
+    P = bl.Paths(root)
+    src = os.path.join(root, "bmx2recomp", "runtime", "main.c")
+    old = (bl.LLVM_NAME, os.environ.pop("BMX2_CLANG", None))
+    try:
+        keys = (bl.build_key(P), bl.object_key(P, "h", bl.compiler_id(P), src))
+        bl.LLVM_NAME = "llvm-mingw-21000101-ucrt-x86_64"
+        new = (bl.build_key(P), bl.object_key(P, "h", bl.compiler_id(P), src))
+        check(new[0] != keys[0], "a new pinned compiler makes the game out of date")
+        check(new[1] != keys[1], "a new pinned compiler gives every object a new key")
+        own = os.path.join(d, "own-clang.exe")
+        with open(own, "w") as fh:
+            fh.write("v1")
+        os.environ["BMX2_CLANG"] = own
+        k1 = bl.build_key(P)
+        with open(own, "w") as fh:
+            fh.write("version 2")
+        check(bl.build_key(P) != k1, "a changed own compiler (BMX2_CLANG) makes the game out of date")
+    finally:
+        bl.LLVM_NAME = old[0]
+        os.environ.pop("BMX2_CLANG", None)
+        if old[1] is not None:
+            os.environ["BMX2_CLANG"] = old[1]
 
 
 def test_a_chd_needs_a_build_that_reads_chd(d):

@@ -133,15 +133,17 @@ are older snapshots, kept for history.
   RecompLauncher's verified badge (only a .bin matches; .iso/.chd still
   work without the badge). Tried in 0.90 Beta 68: picking a .bin, .cue,
   .iso or .chd shows no badge and no warning (no read at the pick; the docs
-  say the copy is read whole at setup); the badge at setup is not seen yet. A newer pinned compiler or Python is installed
-  over an old one: tools/llvm-mingw and tools/python carry
-  bmx2-tools-version.txt; an unmarked folder counts as the one version
-  pinned before the marks (UNMARKED, never to be changed) and gets marked;
-  BMX2_CLANG is never replaced. Object cache keys include compiler_id
-  (LLVM_NAME, or an own compiler's size and date), so a new compiler at the
-  same path recompiles every file; an unreadable mark means reinstall.
-  The key change makes every existing install recompile once (about a
-  minute) on the release that ships it. Marks are written atomically
+  say the copy is read whole at setup); the badge at setup is not seen yet.
+- Done since v0.2.1: a newer pinned compiler or Python is installed over an
+  old one: tools/llvm-mingw and tools/python carry bmx2-tools-version.txt;
+  an unmarked folder counts as the one version pinned before the marks
+  (UNMARKED, never to be changed) and gets marked; BMX2_CLANG is never
+  replaced. build_key and every object key (object_key) include
+  compiler_id (LLVM_NAME, or an own compiler's size and date), so a new
+  compiler, pinned or own, makes the game out of date and recompiles every
+  file; an unreadable mark means reinstall. The first build after this
+  change recompiles every file once (about a minute): the object keys
+  changed. Marks are written atomically
   (.new + os.replace); a test installs a newer pinned compiler and Python
   from fake downloads and checks the marks. Two roots (or two releases)
   that share one tools folder and pin different compilers replace each
