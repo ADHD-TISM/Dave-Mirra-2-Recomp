@@ -134,6 +134,8 @@ are older snapshots, kept for history.
   work without the badge). Tried in 0.90 Beta 68: picking a .bin, .cue,
   .iso or .chd shows no badge and no warning (no read at the pick; the docs
   say the copy is read whole at setup); the badge at setup is not seen yet.
+  Redump 12389 lists Edition "Original, Greatest Hits" (serials
+  SLUS-20159, SLUS-20159GH): both pressings are the same dump.
 - Done since v0.2.1: a newer pinned compiler or Python is installed over an
   old one: tools/llvm-mingw and tools/python carry bmx2-tools-version.txt;
   an unmarked folder counts as the one version pinned before the marks
@@ -141,15 +143,16 @@ are older snapshots, kept for history.
   replaced. build_key and every object key (object_key) include
   compiler_id (LLVM_NAME, or an own compiler's size and date), so a new
   compiler, pinned or own, makes the game out of date and recompiles every
-  file; an unreadable mark means reinstall. The first build after this
-  change recompiles every file once (about a minute): the object keys
-  changed. Marks are written atomically
-  (.new + os.replace); a test installs a newer pinned compiler and Python
-  from fake downloads and checks the marks. Two roots (or two releases)
-  that share one tools folder and pin different compilers replace each
-  other's on every setup; RecompLauncher gives each game one {data}.
-  Redump 12389 lists Edition "Original, Greatest Hits" (serials
-  SLUS-20159, SLUS-20159GH): both pressings are the same dump.
+  file; an unreadable mark means reinstall. compile_game takes build_key
+  and compiler_id once, at the start. The first build after this change
+  recompiles every file once (about a minute): the object keys changed.
+  Marks are written atomically (.new + os.replace). Tests: an install of a
+  newer pinned compiler and Python from fake downloads checks the marks;
+  the real compile_game (stubbed compiler) recompiles every file after a
+  pinned, own or changed own compiler, and nothing with the same one.
+  Two roots (or two releases) that share one tools folder and pin
+  different compilers replace each other's on every setup; RecompLauncher
+  gives each game one {data}.
 - Since v0.2.0: bmx2.exe carries a manifest (runtime/bmx2.manifest, in
   bmx2.rc as resource 1 type 24) with activeCodePage UTF-8, so its ANSI
   calls take UTF-8 and a disc or {data} path with any characters works

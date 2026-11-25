@@ -952,6 +952,7 @@ def compile_game(P, C, log, progress=None):
     if built_ok(P, C):
         log("game is up to date")
         return
+    bk = build_key(P)     # taken before compiling: what this build is made from (compiler and sources)
     src, hdr = _sources(P)
     hh = hashlib.sha256(b"".join(file_bytes(p) for p in hdr)).hexdigest()
     cid = compiler_id(P)     # one compiler for the whole build
@@ -1036,7 +1037,7 @@ def compile_game(P, C, log, progress=None):
         os.remove(tmp)
         raise Fail("%s is in use: close the game and build again" % EXE_FILE)
     C.set("build_chd", any(os.path.basename(p) == "libchdr_all.c" for p in src))   # before build_key: built_ok trusts it
-    C.set("build_key", build_key(P))
+    C.set("build_key", bk)
     log("game built: %s" % P.exe)
 
 

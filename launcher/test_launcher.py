@@ -348,6 +348,60 @@ def test_a_new_compiler_changes_the_build_and_object_keys(d):
             os.environ["BMX2_CLANG"] = old[1]
 
 
+def test_compile_game_recompiles_every_file_after_a_compiler_change(d):
+    root = os.path.join(d, "r")
+    for sub, f in (("bmx2recomp/runtime", "main.c"), ("bmx2recomp/runtime", "pad.c"), ("work/gen", "code.c"),
+                   ("work/gen_iop", "iop.c"), ("work/gen_vu", "vu.h"), ("work/disc", "SLUS_201.59")):
+        os.makedirs(os.path.join(root, sub), exist_ok=True)
+        with open(os.path.join(root, sub, f), "w") as fh:
+            fh.write("x")
+    P = bl.Paths(root)
+    os.makedirs(os.path.dirname(P.clang))
+    open(P.clang, "w").close()
+    compiled = []
+
+    def fake_run(cmd, log, cwd=None, env=None, tag=""):    # the compiler and linker: just make the -o file
+        out = cmd[cmd.index("-o") + 1]
+        if "-c" in cmd:
+            compiled.append(os.path.basename(cmd[cmd.index("-c") + 1]))
+        with open(out, "w") as fh:
+            fh.write("built")
+        return ""
+    old = (bl.LLVM_NAME, os.environ.pop("BMX2_CLANG", None))
+    try:
+        bl.LLVM_NAME = bl.UNMARKED["llvm"]     # the unmarked compiler above counts as this pinned one
+        C = bl.Config(P.cfg)
+        with _Stubs(run=fake_run):
+            bl.compile_game(P, C, lambda s: None)
+            n = len(compiled)
+            check(n == 4, "first build compiles every source: %r" % compiled)
+            compiled.clear()
+            os.remove(P.exe)                    # rebuild with the same compiler: nothing to compile
+            bl.compile_game(P, C, lambda s: None)
+            check(compiled == [], "same compiler: objects reused, got %r" % compiled)
+            bl.LLVM_NAME = "llvm-mingw-21000101-ucrt-x86_64"
+            bl._mark_tool(P.llvm, bl.LLVM_NAME)     # as install_toolchain would after the download
+            bl.compile_game(P, C, lambda s: None)
+            check(len(compiled) == n, "a new pinned compiler recompiles every file: %r" % compiled)
+            compiled.clear()
+            own = os.path.join(d, "own-clang.exe")
+            with open(own, "w") as fh:
+                fh.write("v1")
+            os.environ["BMX2_CLANG"] = own
+            bl.compile_game(P, C, lambda s: None)
+            check(len(compiled) == n, "switching to an own compiler recompiles every file: %r" % compiled)
+            compiled.clear()
+            with open(own, "w") as fh:
+                fh.write("version 2")
+            bl.compile_game(P, C, lambda s: None)
+            check(len(compiled) == n, "a changed own compiler recompiles every file: %r" % compiled)
+    finally:
+        bl.LLVM_NAME = old[0]
+        os.environ.pop("BMX2_CLANG", None)
+        if old[1] is not None:
+            os.environ["BMX2_CLANG"] = old[1]
+
+
 def test_a_chd_needs_a_build_that_reads_chd(d):
     P = bl.Paths(d)
     os.makedirs(P.game)
