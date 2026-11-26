@@ -23,9 +23,9 @@ BMX 2.exe" (setup + start, no window) and recomplauncher.json (see
 "RecompLauncher instead of the launcher window"). Tested in RecompLauncher
 0.90 Beta 68: add (Settings > Bring Your Games > Pick a Folder), setup with
 downloads, settings writes, Play, and Big Picture fullscreen on the Dell all
-pass. v0.1.9 gave bmx2.exe the game's icon and name. Open: the laptop still
-tears (see "Two-chip laptops", left for later by the user). Next: playtest
-(see "Next step"). The State sections below are older snapshots.
+pass. v0.1.9 gave bmx2.exe the game's icon and name. The test laptop is
+scrapped (user, 2026-11-25): its tearing is not pursued and it is no longer
+used for tests (see "Two-chip laptops"). Next: playtest (see "Next step"). The State sections below are older snapshots.
 
 ## State (2026-11-23): v0.1.8 published, playable
 Every level loads and rides, sound plays, memory card saves work, player 2,
@@ -366,6 +366,9 @@ the launcher program, so THIRD_PARTY_NOTICES is unchanged.
   or older) still builds, without the icon.
 
 ## Two-chip laptops (2026-11-23)
+Closed 2026-11-25: the user scrapped the test laptop. The code below stays
+(dedicated-chip exports, timer pacing, vsync_two_chip); the open tearing
+item at the end is dropped, not fixed.
 Test laptop (reached over SSH): i5-9300H 4 cores / 8 threads, GTX 1050 Ti +
 UHD 630, 16 GB, panel 60.003 Hz, compositor 60.04 Hz. Runs go to the
 logged-in desktop through a one-off `schtasks /create /it` task (over SSH
@@ -399,7 +402,7 @@ alone there is no display), deleted after.
   it off there. Players with it on may hit the same block.
 - Not covered: two chips from one vendor (AMD + AMD, Intel Arc + Iris Xe)
   keep vsync.
-- Still open after v0.1.8: the user saw tearing with vsync_two_chip = 1 in
+- Dropped (was open after v0.1.8): the user saw tearing with vsync_two_chip = 1 in
   fullscreen and with timer pacing in a window (3 riding gaps), so neither
   vsync nor desktop composition stops it. A test build without the NVIDIA
   request still ran on the GTX 1050 Ti (the driver chose it; no Windows
